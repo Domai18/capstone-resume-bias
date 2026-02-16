@@ -1,0 +1,10 @@
+---
+title: Quarto Examples CDA 490
+Jupyter: python3
+#conda: ####
+#QUARTO_PYTHON: 3.13.11
+---
+
+```{python}
+import numpy as np
+```

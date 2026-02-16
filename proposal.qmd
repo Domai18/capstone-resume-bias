@@ -1,0 +1,79 @@
+---
+title: "Project Proposal"
+format: html
+---
+
+# Author:
+Derrick Omai
+
+## Primary Question:
+
+**How do different machine learning approaches to automated resume screening introduce or amplify demographic bias, and which model features and algorithmic choices are most responsible for disparate outcomes?**
+
+This research question addresses a critical gap at the intersection of artificial intelligence, employment discrimination, and algorithmic fairness. As organizations increasingly delegate initial resume screening to automated systems, understanding how these models perpetuate or exacerbate existing inequalities becomes essential for both ethical AI development and legal compliance with anti-discrimination statutes.
+
+## Means by which I plan to answer it:
+
+I will answer this question through a number of empirical investigation technoques that build, test, and compare multiple machine learning models under controlled experimental conditions. My approach involves constructing several resume screening algorithms, including logistic regression, random forests, and simple neural networks and training them on resume data with varying feature configurations.
+
+ Each model will be tested with different feature sets: a baseline using only objective qualifications, an expanded set including demographic proxy variables such as names and geographic locations, and intentionally problematic features that likely encode societal biases.
+
+## Principle data Sources:
+
+My analysis will rely on publicly available resume datasets, potentially from repositories such as Kaggle, academic research databases, or synthetic data generation. These datasets typically contain structured information about candidates including years of experience, educational background, skills, previous job titles, and employment history. I will assign demographic signals to resumes based on established naming patterns documented in publicly available data from the Social Security Administration's baby name database and U.S. Census Bureau surname statistics. 
+
+Following methodology from audit studies of hiring discrimination (Bertrand & Mullainathan, 2004), I will select first names and surnames that research has shown statistically correlate with specific racial and gender groups. For example, names like 'Lakisha Washington' or 'Jamal Harris' signal Black identity, while 'Emily Anderson' or 'Brad Miller' signal White identity, based on documented population-level naming patterns. 
+
+For job descriptions, I will utilize existing datasets of real job postings or curate a collection from public job boards, ensuring representation across industries and experience levels. Initially, I was planning on acquiring data that has “hire” vs “no hire” labels. However, due to privacy and legal constraints, real hiring outcome data is not publicly available. Therefore, I will generate labels, which will allow me to study whether ML models introduce additional bias beyond what exists in the labeling process itself.
+
+## How I plan to analyze the data to answer my question:
+
+My analytical approach systematically tests whether machine learning models introduce demographic bias into resume screening through four interconnected stages. I will begin by establishing baseline model performance, training each algorithm typ; logistic regression, random forest, gradient boosting, and neural network, using only objective qualification features such as years of experience, relevant skills, and education level. 
+
+By measuring how accurately these models predict the ground truth hiring labels using standard metrics like accuracy, precision, and recall, I establish whether the models can successfully learn merit-based screening criteria without any demographic information present. This baseline is essential because it demonstrates the models' fundamental capability to identify qualified candidates based purely on job-relevant factors.
+
+Once baseline performance is established, I will move to the core bias detection phase by creating matched pairs of test resumes that are identical in all qualifications but differ only in demographic signals. For example, I will generate pairs where one resume has the name "Lakisha Washington" and another has "Emily Peterson," but both candidates possess exactly the same skills, experience levels, and educational backgrounds. I will submit these matched pairs through each trained model and carefully record the prediction scores or hiring recommendations each receives. 
+
+If the models systematically assign different scores to equivalent candidates based solely on names or other demographic proxies, this provides direct evidence of algorithmic bias. To ensure these observed differences are statistically meaningful rather than random noise, I will employ chi-square tests to assess whether prediction outcomes are independent of demographic characteristics.
+
+## What do i expect to learn and why is it significant:
+
+I hypothesize that machine learning models trained on historical hiring data will exhibit measurable demographic bias, with certain groups receiving systematically lower scores despite equivalent qualifications. 
+
+Based on prior research demonstrating resume callback disparities by race and gender, I expect that seemingly neutral features like names, universities, and employment gaps will serve as powerful indicators for ‘protected’ characteristics. I anticipate that more complex models may actually encode more subtle forms of bias by learning intricate correlations that simpler models miss, though they may also be more amenable to sophisticated debiasing techniques.
+
+This research is significant for several interconnected reasons. Practically, it provides actionable guidance for organizations implementing automated screening systems, identifying which modeling choices introduce the greatest discrimination risk and which interventions most effectively mitigate it. Ethically, it addresses fundamental questions of algorithmic justice: as AI systems increasingly mediate access to economic opportunities, understanding and preventing their discriminatory potential becomes a moral imperative.
+
+## Analyses i can perform to get the significance:
+
+To establish the significance and robustness of my findings, I will conduct multiple layers of statistical and substantive analysis. For statistical significance, I will employ hypothesis testing frameworks: chi-square tests will determine whether the association between demographic signals and hiring recommendations is statistically significant. Regression models with will test whether the effect of qualifications on hiring predictions differs across demographic groups, with coefficient significance tests and confidence intervals quantifying uncertainty.
+
+For practical significance, I will calculate effect sizes such as Cohen's d to measure the magnitude of score differences between demographic groups, and compute disparate impact ratios to assess whether models violate the 80% rule used in employment discrimination law. I will also conduct sensitivity analyses, varying modeling assumptions and demographic signal assignments to determine whether findings are robust or fragile to specification choices.
+
+As for model comparison, I will try statistical tests like McNemar's test for paired model predictions or bootstrap resampling to establish whether differences in fairness metrics across model types are statistically meaningful. For the bias mitigation experiments, I will use paired t-tests or Wilcoxon signed-rank tests to determine whether interventions produce statistically significant improvements in fairness metrics, and whether accuracy degradation is statistically significant. 
+
+Visualizations including ROC curves stratified by demographic group, fairness-accuracy Pareto frontiers, and feature importance distributions will complement formal tests by making patterns visually apparent.
+
+## Why do it in the first place:
+
+## Why is it worthwhile:
+
+## Why is what I will be doing with it worthwhile:
+
+The fundamental motivation for this research stems from the rapid proliferation of automated hiring systems and their potential to perpetuate discrimination at unprecedented scale. Companies like Amazon have already discovered and scrapped biased resume screening tools, but many organizations continue deploying such systems without rigorous bias audits. 
+
+Unlike human recruiters who process limited applications, algorithmic systems screen thousands or millions of candidates, meaning even small biases compound into substantial discriminatory impact affecting entire demographic groups' access to employment.
+
+This research is worthwhile because it addresses a consequential real-world problem with immediate practical applications. The hiring process is a critical gateway to economic opportunity, and systematic exclusion of qualified candidates based on demographic characteristics perpetuates inequality, wastes human capital, and violates fundamental principles of meritocracy and fairness.
+
+
+Moreover, the timing is critical. As AI capabilities advance, automated decision-making in employment will only increase. Establishing best practices now, while the technology is still evolving, offers an opportunity to shape development trajectories toward fairness rather than attempting to retrofit accountability into entrenched systems later. 
+
+
+
+
+
+
+
+
+
