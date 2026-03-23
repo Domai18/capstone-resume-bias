@@ -1,0 +1,274 @@
+---
+title: "Phase 3b: Methodology Pivot Documentation"
+author: "Derrick Omai"
+date: "2026-02-28"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+---
+
+## Purpose
+
+This notebook documents a **critical methodology pivot** made during the project. It explains:
+
+1. What the original approach was
+2. Why it was problematic
+3. What the revised approach is
+4. How this affects the research question
+
+This documentation ensures transparency and provides rationale for the methodological decisions.
+
+---
+
+## Original Approach (Pre-Pivot)
+
+### Research Question (Original)
+
+> Do ML models introduce or amplify demographic bias when screening resumes, even when trained on bias-free labels?
+
+### Label Generation (Original)
+
+Labels were generated based on **objective qualifications only**:
+
+```
+qualification_score = exp_score + skill_score + edu_score + noise
+hired = 1 if score in top 40% of field
+```
+
+- No demographic information influenced the hire decision
+- Names were randomly assigned to resumes
+- Intent: Test whether ML models *introduce* bias that wasn't present in training data
+
+### The Problem
+
+**If training labels contain no demographic signal, models cannot learn systematic discrimination.**
+
+Consider the logic:
+
+| Feature Set | Training Labels | Expected Outcome |
+|-------------|-----------------|------------------|
+| Baseline (quals only) | Bias-free | No bias (identical inputs → identical outputs) |
+| Expanded (+ names) | Bias-free | Minimal bias (names don't predict labels) |
+| Problematic (+ race/gender) | Bias-free | Minimal bias (demographics don't predict labels) |
+
+With randomly assigned names and qualification-based labels:
+- There is no correlation between names and outcomes in training data
+- Models cannot learn what doesn't exist
+- Expected finding: near-zero disparities across all conditions
+
+**This approach answers a question with an obvious answer: "No, models don't create bias from nothing."**
+
+---
+
+## The Pivot Decision
+
+### Critical Insight
+
+The practical question companies face is not:
+> "Do models create bias from unbiased data?"
+
+But rather:
+> "Can we reduce bias by removing demographic features, when our historical data already contains bias?"
+
+Real ATS systems are trained on decades of human hiring decisions that reflect documented discrimination. Testing whether "removing protected attributes" works as a debiasing strategy requires **training on biased data**.
+
+### Decision Made
+
+**Pivot to historically-biased synthetic labels**, calibrated to empirical discrimination findings.
+
+---
+
+## Revised Approach (Post-Pivot)
+
+### Research Question (Revised)
+
+> Does excluding demographic features from model inputs mitigate bias in outcomes when models are trained on historically biased data, or do proxy variables (names) enable the reconstruction of discrimination?
+
+### Calibration Source
+
+**Quillian, L., Pager, D., Hexel, O., & Midtbøen, A. H. (2017).** Meta-analysis of field experiments shows no change in racial discrimination in hiring over time. *Proceedings of the National Academy of Sciences*, 114(41), 10870-10875.
+
+Key finding: White applicants receive **36% more callbacks** than equally qualified Black applicants.
+
+- Callback ratio: White / Black ≈ 1.36
+- Based on meta-analysis of 28 audit studies (1989–2015)
+- Robust, empirically-grounded estimate
+
+### Label Generation (Revised)
+
+```
+p_callback = sigmoid(α + β × qual_score + γ_race × is_black)
+```
+
+Where:
+- α controls overall callback rate (~10%)
+- β controls qualification effect
+- γ_race is calibrated to produce White:Black ratio ≈ 1.36
+
+```{python}
+# Demonstration of the bias calibration concept
+import numpy as np
+from scipy.special import expit as sigmoid
+
+# Example: Two equally qualified candidates
+qual_score = 0.5  # standardized
+
+# Parameters (illustrative)
+alpha = -2.0
+beta = 0.8
+gamma_race = -0.31  # calibrated penalty for Black applicants
+
+# Callback probabilities
+p_white = sigmoid(alpha + beta * qual_score + 0)
+p_black = sigmoid(alpha + beta * qual_score + gamma_race)
+
+print("Example: Two equally qualified candidates")
+print(f"  White candidate callback probability: {p_white:.1%}")
+print(f"  Black candidate callback probability: {p_black:.1%}")
+print(f"  Ratio (White/Black): {p_white/p_black:.2f}")
+```
+
+### Scope: Race Only
+
+**Decision:** Focus exclusively on racial bias (White vs Black), not gender.
+
+**Rationale:**
+- Quillian et al. (2017) reports race-specific discrimination only (1.36 ratio)
+- Adding gender bias would require a separate empirical source or arbitrary parameters
+- Simplicity: 2-group comparison is cleaner to analyze and explain
+- We retain all 4 name variants (WM, WF, BM, BF) but analyze by race only
+
+### Three Experimental Regimes (Revised)
+
+| Regime | Features | Tests |
+|--------|----------|-------|
+| **A: Qualifications Only** | skills, experience, education | Does removing race eliminate learned bias? |
+| **B: Qualifications + Names** | Regime A + name (one-hot) | Do names act as proxies to reconstruct racial bias? |
+| **C: Qualifications + Explicit Race** | Regime A + race | Upper bound on discrimination |
+
+### Expected Findings (Post-Pivot)
+
+| Regime | Expected White:Black Ratio | Reasoning |
+|--------|---------------------------|-----------|
+| Training Labels | 1.36 | By construction (Quillian calibration) |
+| **A: Quals Only** | ~1.0 to 1.1 | Model can't access race; some residual if quals correlate with labels |
+| **B: + Names** | ~1.1 to 1.3 | Names partially reconstruct racial signal |
+| **C: + Explicit Race** | ~1.36 | Model has direct race access; reproduces training bias |
+
+**The key comparison:** Does Regime B stay close to Regime A (names don't matter) or drift toward Regime C (names enable proxy discrimination)?
+
+---
+
+## Proxy Analysis
+
+Before finalizing the pivot, we analyzed the resume corpus for potential proxy variables.
+
+```{python}
+import pandas as pd
+
+# Load data
+df = pd.read_csv('../data/processed/resumes_with_features.csv')
+
+print(f"Total resumes: {len(df)}")
+print("\n=== PROXY AVAILABILITY CHECK ===\n")
+
+# Check for professional affiliations
+affiliations = ['NSBE', 'NABA', 'SHPE', 'SWE', 'NBMBAA', 'ALPFA']
+print("Professional Affiliations (race/gender-correlated orgs):")
+for abbrev in affiliations:
+    matches = df['Resume_str'].str.contains(rf'\b{abbrev}\b', case=False, na=False).sum()
+    print(f"  {abbrev}: {matches} resumes")
+
+# Check for HBCUs
+hbcus = ["Howard University", "Spelman College", "Morehouse College",
+         "Hampton University", "Florida A&M", "North Carolina A&T"]
+print("\nHBCU Mentions (sample):")
+total_hbcu = 0
+for school in hbcus:
+    matches = df['Resume_str'].str.contains(school, case=False, na=False).sum()
+    if matches > 0:
+        print(f"  {school}: {matches}")
+        total_hbcu += matches
+print(f"\nTotal HBCU mentions: ~{total_hbcu} resumes ({100*total_hbcu/len(df):.1f}%)")
+```
+
+### Proxy Decision
+
+| Proxy Type | Availability | Decision |
+|------------|--------------|----------|
+| Names | ✅ Full (48 names, 4 groups) | **Primary proxy** |
+| Professional affiliations | ❌ ~0 matches | Not usable |
+| HBCUs | ⚠️ ~3% of resumes | Too sparse |
+| Greek organizations | ❌ ~4 matches | Not usable |
+
+**Conclusion:** Use **names as the sole proxy**. This:
+- Simplifies the experiment
+- Directly mirrors Bertrand & Mullainathan (2004) methodology
+- Produces cleaner, more interpretable results
+
+---
+
+## Summary of Changes
+
+| Aspect | Original | Revised |
+|--------|----------|---------|
+| **Research Question** | Do models *introduce* bias? | Do models *reproduce* bias? Can removing features mitigate it? |
+| **Training Labels** | Bias-free (qualification-based) | Biased (Quillian-calibrated, 1.36 ratio) |
+| **Demographic Scope** | Race + Gender (4 groups) | **Race only** (White vs Black) |
+| **Feature Sets** | Baseline / Expanded / Problematic | Regime A / B / C |
+| **Expected Findings** | Minimal disparities (obvious) | Meaningful comparison of debiasing strategies |
+| **Practical Relevance** | Limited | High (mirrors real-world ATS challenge) |
+| **Proxy Variables** | Names + affiliations + HBCUs | Names only (others too sparse) |
+
+---
+
+## Impact on Prior Work
+
+| Phase | Impact |
+|-------|--------|
+| Phase 1: Data Collection | ✅ No change needed |
+| Phase 2: Preprocessing | ✅ Matched pairs still valid; labels will be regenerated |
+| Phase 3: EDA | ✅ Still valid |
+| Phase 4: Baseline Models | ⚠️ **Obsolete** — must retrain with biased labels |
+| Phase 5+: Bias Testing | ⚠️ **Not started** — new pipeline |
+
+---
+
+## New Pipeline
+
+```
+notebooks/data_collection.qmd        ✅ Complete (Phase 1)
+notebooks/data_preprocessing.qmd     ✅ Complete (Phase 2)
+notebooks/eda.qmd                    ✅ Complete (Phase 3)
+notebooks/03b_methodology_pivot.qmd  ← YOU ARE HERE
+notebooks/04_label_generation.qmd    ⏳ Next: Generate biased labels
+notebooks/05_model_training.qmd      ⏳ Train under 3 regimes
+notebooks/06_bias_testing.qmd        ⏳ Matched-pair audit
+```
+
+---
+
+## References
+
+1. **Bertrand, M., & Mullainathan, S. (2004).** Are Emily and Greg More Employable Than Lakisha and Jamal? A Field Experiment on Labor Market Discrimination. *American Economic Review*, 94(4), 991-1013.
+
+2. **Quillian, L., Pager, D., Hexel, O., & Midtbøen, A. H. (2017).** Meta-analysis of field experiments shows no change in racial discrimination in hiring over time. *Proceedings of the National Academy of Sciences*, 114(41), 10870-10875.
+
+---
+
+## Approval
+
+This methodology pivot was documented on **February 28, 2026**.
+
+The revised approach:
+- Addresses a more practically relevant research question
+- Uses empirically-grounded bias calibration (not arbitrary)
+- Maintains scientific rigor through matched-pair design
+- Produces interpretable, actionable findings
+
+**Proceed to Phase 4: Label Generation →**

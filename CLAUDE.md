@@ -4,7 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Capstone research project (CDA 490) by Derrick Omai investigating how ML-based automated resume screening introduces or amplifies demographic bias. Uses matched-pair testing across multiple models to detect disparate outcomes by race and gender, following the audit study methodology of Bertrand & Mullainathan (2004).
+Capstone research project (CDA 490) by Derrick Omai investigating whether excluding demographic features from ML resume screening models mitigates bias when trained on historically biased data, or whether proxy variables (names) enable reconstruction of discrimination.
+
+**Central Research Question:**
+> Does excluding demographic features from model inputs mitigate bias in outcomes when models are trained on historically biased data, or do proxy variables (names) enable the reconstruction of discrimination?
+
+**Methodology:** Uses matched-pair testing (Bertrand & Mullainathan, 2004) with callback labels calibrated to Quillian et al. (2017) meta-analysis findings (White:Black callback ratio = 1.36).
 
 ## Technology Stack
 
@@ -45,11 +50,13 @@ results/tables/     — Exported statistical test results
 
 - **Data immutability**: Files in `data/raw/` are never modified. All transformations happen in code and output to `data/processed/`.
 - **Notebook ordering**: Numbered prefixes (01_, 02_, ...) indicate execution order and pipeline stage.
-- **Three feature sets** are central to the experiment:
-  1. **Baseline** — objective qualifications only (experience, skills, education)
-  2. **Expanded** — adds demographic proxy variables (names, geography)
-  3. **Problematic** — intentionally includes features encoding societal biases
-- **Matched-pair testing**: Bias is measured by comparing model scores on resume pairs that are identical in qualifications but differ in demographic signals (names correlated with race/gender via SSA/Census data).
+- **Scope: Race only** — Gender removed from analysis. Quillian et al. (2017) provides race-specific discrimination ratios only; including gender would require a separate empirical source.
+- **Three experimental regimes** are central to the experiment:
+  1. **Regime A (Qualifications Only)** — skills, experience, education (3 features)
+  2. **Regime B (+ Names)** — Regime A + one-hot encoded names (48 features). Tests proxy discrimination.
+  3. **Regime C (+ Explicit Race)** — Regime A + race_encoded. Upper bound on discrimination.
+- **Matched-pair testing**: Bias is measured by comparing model scores on resume pairs that are identical in qualifications but differ in racial signals (24 names per racial group via SSA/Census data).
+- **1,102 matched pairs**: 551 original resumes × 2 racial variants (White, Black).
 - **`*_files/` directories** are auto-generated Quarto build artifacts — do not edit manually.
 
 ## Statistical Methods Used
@@ -63,4 +70,12 @@ results/tables/     — Exported statistical test results
 
 ## Research Context
 
-Synthetic hire/no-hire labels are used because real hiring outcome data is not publicly available. This is by design — it allows studying whether ML models introduce bias beyond what exists in the labeling process itself.
+Callback labels are synthetically generated with embedded racial discrimination, calibrated to Quillian et al. (2017) meta-analysis findings (White:Black callback ratio = 1.36). This tests whether models trained on historically biased data can be "debiased" by excluding demographic features — a common industry practice.
+
+## Scope Decision Log (March 2, 2026)
+
+Gender removed from analysis. Two options for name assignment were considered:
+- **Option A**: One name per race — rejected because it collapses Regime B into Regime C (name perfectly encodes race)
+- **Option B**: Multiple names per race (24 per group) — selected to preserve proxy discrimination testing
+
+This maintains methodological consistency with Quillian while simplifying the analysis to race-only comparisons.

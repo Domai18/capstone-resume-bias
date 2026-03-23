@@ -1,10 +1,10 @@
 {
-  "baseline": [
+  "regime_a": [
     "skills_count",
     "years_experience",
     "education_level"
   ],
-  "expanded_encoded": [
+  "regime_b_encoded": [
     "skills_count",
     "years_experience",
     "education_level",
@@ -57,11 +57,10 @@
     "name_Tremayne Brown",
     "name_Tyrone Jackson"
   ],
-  "problematic_encoded": [
+  "regime_c_encoded": [
     "skills_count",
     "years_experience",
     "education_level",
-    "race_encoded",
-    "gender_encoded"
+    "race_encoded"
   ]
 }

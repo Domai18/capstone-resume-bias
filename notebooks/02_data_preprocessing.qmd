@@ -1,0 +1,432 @@
+---
+title: "02 - Data Preprocessing"
+format: html
+jupyter: python3
+---
+
+## Overview
+
+This notebook processes the raw resume data to:
+
+1. Extract structured features from resume text (skills count, experience years, education level)
+2. Assign demographic signals (names) using SSA/Census patterns
+3. Generate synthetic hire/no-hire labels
+4. Create matched pairs for bias testing
+5. Build three feature sets (baseline, expanded, problematic)
+
+## Setup
+
+```{python}
+import pandas as pd
+import numpy as np
+import re
+import random
+from pathlib import Path
+
+random.seed(42)
+np.random.seed(42)
+
+PROJECT_ROOT = Path.cwd().parent
+RAW_DATA = PROJECT_ROOT / "data" / "raw"
+PROCESSED_DATA = PROJECT_ROOT / "data" / "processed"
+
+# Ensure processed directory exists
+PROCESSED_DATA.mkdir(parents=True, exist_ok=True)
+```
+
+## Load Data
+
+```{python}
+resumes_df = pd.read_csv(RAW_DATA / "resumes_filtered.csv")
+jobs_df = pd.read_csv(RAW_DATA / "job_descriptions.csv")
+
+print(f"Resumes: {len(resumes_df)}")
+print(f"Job Descriptions: {len(jobs_df)}")
+```
+
+## Part 1: Feature Extraction from Resume Text
+
+We'll extract three key features from each resume:
+
+- **skills_count**: Number of identifiable skills mentioned
+- **years_experience**: Years of work experience (extracted from dates)
+- **education_level**: Highest education level (encoded numerically)
+
+```{python}
+# Skills lists by field (used to count matching skills in resume)
+field_skills = {
+    'Education': [
+        'teaching', 'classroom', 'curriculum', 'lesson plan', 'student',
+        'instruction', 'assessment', 'education', 'learning', 'school',
+        'pedagogy', 'tutoring', 'grading', 'differentiated', 'iep'
+    ],
+    'Healthcare': [
+        'patient', 'nursing', 'clinical', 'medical', 'healthcare', 'hospital',
+        'care', 'treatment', 'diagnosis', 'medication', 'vital signs', 'ehr',
+        'emr', 'hipaa', 'bls', 'acls', 'cpr', 'rn', 'bsn'
+    ],
+    'Technology': [
+        'python', 'java', 'javascript', 'sql', 'programming', 'software',
+        'developer', 'engineering', 'code', 'database', 'api', 'cloud',
+        'aws', 'linux', 'git', 'agile', 'scrum', 'html', 'css', 'react'
+    ],
+    'Finance': [
+        'financial', 'accounting', 'budget', 'forecast', 'analysis', 'excel',
+        'reporting', 'audit', 'tax', 'revenue', 'profit', 'investment',
+        'portfolio', 'risk', 'gaap', 'banking', 'finance'
+    ],
+    'Marketing': [
+        'marketing', 'campaign', 'social media', 'seo', 'analytics', 'brand',
+        'content', 'digital', 'advertising', 'ppc', 'google', 'facebook',
+        'strategy', 'engagement', 'conversion', 'roi'
+    ]
+}
+
+def count_skills(resume_text: str, field: str) -> int:
+    """Count how many field-relevant skills appear in resume."""
+    text_lower = resume_text.lower()
+    skills = field_skills.get(field, [])
+    count = sum(1 for skill in skills if skill in text_lower)
+    return count
+```
+
+```{python}
+def extract_years_experience(resume_text: str) -> int:
+    """Extract approximate years of experience from resume text."""
+
+    # Look for year patterns like "2015 to 2020" or "2015 - Current"
+    year_pattern = r'(19|20)\d{2}'
+    years = re.findall(year_pattern, resume_text)
+
+    if len(years) >= 2:
+        # Convert to integers and find range
+        year_ints = [int(y) for y in set(years) if 1980 <= int(y) <= 2026]
+        if len(year_ints) >= 2:
+            experience = max(year_ints) - min(year_ints)
+            return min(experience, 40)  # Cap at 40 years
+
+    # Fallback: look for explicit mentions like "10 years experience"
+    exp_pattern = r'(\d+)\+?\s*years?\s*(of)?\s*(experience|exp)'
+    match = re.search(exp_pattern, resume_text.lower())
+    if match:
+        return min(int(match.group(1)), 40)
+
+    # Default to random 1-5 if can't determine
+    return random.randint(1, 5)
+```
+
+```{python}
+def extract_education_level(resume_text: str) -> int:
+    """
+    Extract education level from resume text.
+    Returns numeric encoding:
+    1 = High School / No degree mentioned
+    2 = Associate's
+    3 = Bachelor's
+    4 = Master's
+    5 = Doctorate/PhD
+    """
+    text_lower = resume_text.lower()
+
+    if any(term in text_lower for term in ['phd', 'ph.d', 'doctorate', 'doctoral']):
+        return 5
+    elif any(term in text_lower for term in ['master', 'mba', 'ms ', 'm.s.', 'ma ', 'm.a.', 'msn']):
+        return 4
+    elif any(term in text_lower for term in ['bachelor', 'bs ', 'b.s.', 'ba ', 'b.a.', 'bsn', 'undergraduate']):
+        return 3
+    elif any(term in text_lower for term in ['associate', 'adn', 'a.s.', 'a.a.']):
+        return 2
+    else:
+        return 1  # High school or not mentioned
+```
+
+```{python}
+# Apply feature extraction to all resumes
+print("Extracting features from resumes...")
+
+resumes_df['skills_count'] = resumes_df.apply(
+    lambda row: count_skills(row['Resume_str'], row['Field']), axis=1
+)
+resumes_df['years_experience'] = resumes_df['Resume_str'].apply(extract_years_experience)
+resumes_df['education_level'] = resumes_df['Resume_str'].apply(extract_education_level)
+
+print("Done!\n")
+print(resumes_df[['Field', 'skills_count', 'years_experience', 'education_level']].describe())
+```
+
+```{python}
+# Preview extracted features by field
+print("Average features by field:\n")
+print(resumes_df.groupby('Field')[['skills_count', 'years_experience', 'education_level']].mean().round(2))
+```
+
+## Part 2: Assign Demographic Signals (Names)
+
+Following Bertrand & Mullainathan (2004), we assign names that research has shown correlate with specific racial groups.
+
+**Name sources:**
+- SSA Baby Names Database
+- Census Bureau surname statistics (race correlation)
+
+**Scope Decision (March 2026):** Gender removed from analysis. Quillian et al. (2017), our
+calibration source for callback bias, reports race-specific discrimination only (White:Black
+ratio = 1.36). Including gender would require a separate empirical source or arbitrary
+parameters. Focusing on race-only simplifies analysis and maintains methodological consistency.
+
+Multiple names per racial group are retained (Option B) to preserve the proxy discrimination
+research design — if we used only one name per race, names would perfectly encode race,
+collapsing Regime B into Regime C.
+
+```{python}
+# Names selected based on Bertrand & Mullainathan methodology
+# These are names with strong demographic signals from research literature
+# Gender removed — race-only analysis per Quillian et al. (2017) scope
+
+demographic_names = {
+    'white': [
+        'Brad Anderson', 'Greg Baker', 'Todd Miller', 'Brett Wilson',
+        'Brendan Taylor', 'Geoffrey Thomas', 'Brett Martin', 'Jay Garcia',
+        'Neil Johnson', 'Todd Williams', 'Matthew Davis', 'Connor Brown',
+        'Emily Walsh', 'Anne Peterson', 'Meredith Collins', 'Carrie Stewart',
+        'Kristen Murphy', 'Laurie Rogers', 'Sarah Mitchell', 'Jill Anderson',
+        'Allison Martin', 'Emily Taylor', 'Claire Johnson', 'Molly Davis'
+    ],
+    'black': [
+        'Jamal Washington', 'Leroy Harris', 'Tyrone Jackson', 'Darnell Robinson',
+        'Hakim Williams', 'Rasheed Jones', 'Tremayne Brown', 'Kareem Davis',
+        'Terrence Moore', 'Jermaine Taylor', 'DeShawn Wilson', 'Marquis Thomas',
+        'Lakisha Washington', 'Tanisha Harris', 'Aisha Jackson', 'Ebony Robinson',
+        'Keisha Williams', 'Tamika Jones', 'Latoya Brown', 'Kenya Davis',
+        'Precious Moore', 'Imani Taylor', 'Aaliyah Wilson', 'Shanice Thomas'
+    ]
+}
+
+# Create lookup for race from name
+name_to_race = {}
+for race, names in demographic_names.items():
+    for name in names:
+        name_to_race[name] = race
+```
+
+```{python}
+# Assign each resume a random demographic signal (race only)
+# We'll create the full matched pairs later
+
+all_names = []
+for names in demographic_names.values():
+    all_names.extend(names)
+
+resumes_df['assigned_name'] = [random.choice(all_names) for _ in range(len(resumes_df))]
+resumes_df['race'] = resumes_df['assigned_name'].map(name_to_race)
+
+print("Racial distribution:")
+print(resumes_df['race'].value_counts())
+```
+
+## Part 3: Generate Synthetic Hire/No-Hire Labels
+
+We create labels based on **qualification matching** -- comparing resume features to job requirements.
+
+The labeling is intentionally **bias-free** at this stage. This allows us to test whether ML models introduce bias that wasn't in the training labels.
+
+```{python}
+def calculate_qualification_score(row: pd.Series) -> float:
+    """
+    Calculate a qualification score (0-100) based on objective features only.
+    Higher = more qualified.
+    """
+    # Get average job requirements for this field
+    field_jobs = jobs_df[jobs_df['field'] == row['Field']]
+    avg_exp_required = field_jobs['years_experience_required'].mean()
+
+    # Score components (all objective, no demographic info)
+    exp_score = min(row['years_experience'] / max(avg_exp_required, 1), 2.0) * 30  # Max 60 pts
+    skill_score = min(row['skills_count'] / 10, 1.0) * 25  # Max 25 pts
+    edu_score = (row['education_level'] / 5) * 15  # Max 15 pts
+
+    # Add small random noise to simulate real-world variation
+    noise = np.random.normal(0, 5)
+
+    total = exp_score + skill_score + edu_score + noise
+    return np.clip(total, 0, 100)
+
+resumes_df['qualification_score'] = resumes_df.apply(calculate_qualification_score, axis=1)
+```
+
+```{python}
+# Generate hire labels based on qualification score
+# Top 40% get hired (threshold varies slightly by field to ensure balance)
+
+def assign_hire_label(df: pd.DataFrame) -> pd.DataFrame:
+    """Assign hire labels within each field based on qualification score."""
+    df = df.copy()
+    df['hired'] = 0
+
+    for field in df['Field'].unique():
+        mask = df['Field'] == field
+        field_df = df[mask]
+
+        # Top 40% in each field get hired
+        threshold = field_df['qualification_score'].quantile(0.6)
+        df.loc[mask & (df['qualification_score'] >= threshold), 'hired'] = 1
+
+    return df
+
+resumes_df = assign_hire_label(resumes_df)
+
+print("Hire rates by field:")
+print(resumes_df.groupby('Field')['hired'].mean().round(3))
+print(f"\nOverall hire rate: {resumes_df['hired'].mean():.1%}")
+```
+
+```{python}
+# Verify labels are NOT correlated with race (bias-free labeling at this stage)
+print("Hire rates by race (should be approximately equal):\n")
+print(resumes_df.groupby('race')['hired'].mean().round(3))
+```
+
+## Part 4: Create Matched Pairs
+
+For bias testing, we create pairs of identical resumes that differ only in racial signals.
+
+```{python}
+def create_matched_pairs(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create matched pairs: each resume gets duplicated with 2 different names
+    (one from each racial group). All other features stay identical.
+
+    Race-only design per Quillian et al. (2017) scope — gender removed.
+    Multiple names per race (Option B) preserves proxy discrimination testing.
+    """
+    pairs = []
+
+    for idx, row in df.iterrows():
+        base_data = row.to_dict()
+
+        # Create one version with each racial group's name
+        for race, names in demographic_names.items():
+            pair_data = base_data.copy()
+            pair_data['assigned_name'] = random.choice(names)
+            pair_data['race'] = race
+            pair_data['original_id'] = row['ID']  # Track which resumes are matched
+            pairs.append(pair_data)
+
+    return pd.DataFrame(pairs)
+
+print("Creating matched pairs...")
+matched_df = create_matched_pairs(resumes_df)
+print(f"Original resumes: {len(resumes_df)}")
+print(f"After matching (2x): {len(matched_df)}")
+```
+
+```{python}
+# Verify matched pairs have identical qualifications
+sample_id = matched_df['original_id'].iloc[0]
+print(f"Sample matched pair (original_id = {sample_id}):\n")
+sample_matches = matched_df[matched_df['original_id'] == sample_id][
+    ['assigned_name', 'race', 'skills_count', 'years_experience', 'education_level', 'qualification_score']
+]
+print(sample_matches.to_string(index=False))
+```
+
+## Part 5: Build Feature Sets
+
+Three experimental regimes for modeling:
+
+1. **Regime A (Qualifications Only)**: Objective qualifications only (no demographic info)
+2. **Regime B (+ Names)**: Adds name as a feature (demographic proxy)
+3. **Regime C (+ Explicit Race)**: Adds explicit race feature
+
+```{python}
+# Define feature sets (three experimental regimes)
+regime_a_features = ['skills_count', 'years_experience', 'education_level']
+
+regime_b_features = regime_a_features + ['assigned_name']  # Name as proxy
+
+regime_c_features = regime_a_features + ['race']  # Explicit race
+
+print("Feature sets defined (race-only, no gender):")
+print(f"  Regime A (Qualifications Only): {regime_a_features}")
+print(f"  Regime B (+ Names): {regime_b_features}")
+print(f"  Regime C (+ Explicit Race): {regime_c_features}")
+```
+
+```{python}
+# Encode categorical variables for modeling
+
+# One-hot encode names for Regime B (24 names per race = 48 total name features)
+name_dummies = pd.get_dummies(matched_df['assigned_name'], prefix='name')
+matched_df = pd.concat([matched_df, name_dummies], axis=1)
+
+# Encode race for Regime C (binary: white=1, black=0)
+matched_df['race_encoded'] = (matched_df['race'] == 'white').astype(int)
+
+# Update feature lists with encoded versions
+regime_b_encoded = regime_a_features + [col for col in matched_df.columns if col.startswith('name_')]
+regime_c_encoded = regime_a_features + ['race_encoded']
+
+print(f"\nRegime B features (encoded): {len(regime_b_encoded)} features")
+print(f"  - 3 qualification features + {len(regime_b_encoded) - 3} name dummy variables")
+print(f"Regime C features (encoded): {regime_c_encoded}")
+```
+
+## Save Processed Data
+
+```{python}
+# Save the main processed dataset
+matched_df.to_csv(PROCESSED_DATA / "resumes_processed.csv", index=False)
+print(f"Saved: {PROCESSED_DATA / 'resumes_processed.csv'}")
+
+# Save feature set definitions for later use (using regime naming)
+feature_sets = {
+    'regime_a': regime_a_features,
+    'regime_b_encoded': regime_b_encoded,
+    'regime_c_encoded': regime_c_encoded
+}
+
+import json
+with open(PROCESSED_DATA / "feature_sets.json", 'w') as f:
+    json.dump(feature_sets, f, indent=2)
+print(f"Saved: {PROCESSED_DATA / 'feature_sets.json'}")
+
+# Also save the original (non-matched) processed resumes
+resumes_df.to_csv(PROCESSED_DATA / "resumes_with_features.csv", index=False)
+print(f"Saved: {PROCESSED_DATA / 'resumes_with_features.csv'}")
+```
+
+## Summary
+
+```{python}
+print("=" * 60)
+print("DATA PREPROCESSING COMPLETE")
+print("=" * 60)
+
+print(f"\n1. FEATURE EXTRACTION")
+print(f"   - skills_count: range {resumes_df['skills_count'].min()}-{resumes_df['skills_count'].max()}")
+print(f"   - years_experience: range {resumes_df['years_experience'].min()}-{resumes_df['years_experience'].max()}")
+print(f"   - education_level: 1-5 scale (1=HS, 5=PhD)")
+
+print(f"\n2. DEMOGRAPHIC SIGNALS (Race Only)")
+print(f"   - 2 groups: white, black (gender removed per Quillian scope)")
+print(f"   - 24 names per racial group (Option B: multiple names preserve proxy testing)")
+print(f"   - Names from Bertrand & Mullainathan methodology")
+
+print(f"\n3. QUALIFICATION SCORES")
+print(f"   - Based on objective features only")
+print(f"   - Callback labels generated separately in Phase 4 (Quillian-calibrated)")
+
+print(f"\n4. MATCHED PAIRS")
+print(f"   - {len(resumes_df)} original resumes")
+print(f"   - {len(matched_df)} matched versions (2 per original)")
+print(f"   - Identical qualifications, different racial signals")
+
+print(f"\n5. EXPERIMENTAL REGIMES")
+print(f"   - Regime A: {len(regime_a_features)} features (qualifications only)")
+print(f"   - Regime B: {len(regime_b_encoded)} features (qualifications + name encoding)")
+print(f"   - Regime C: {len(regime_c_encoded)} features (qualifications + explicit race)")
+
+print(f"\nFiles saved to data/processed/:")
+print(f"   - resumes_processed.csv (matched pairs)")
+print(f"   - resumes_with_features.csv (original with features)")
+print(f"   - feature_sets.json (feature definitions)")
+```
