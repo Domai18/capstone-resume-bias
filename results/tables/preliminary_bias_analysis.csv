@@ -1,0 +1,7 @@
+regime,model,white_callback_rate,black_callback_rate,white_black_ratio,disparate_impact,passes_80_rule
+A_quals_only,Logistic Regression,0.0,0.0,inf,0.0,False
+A_quals_only,Random Forest,0.0,0.0,inf,0.0,False
+B_quals_plus_names,Logistic Regression,0.0,0.0,inf,0.0,False
+B_quals_plus_names,Random Forest,0.02702702702702703,0.009009009009009009,3.0,0.3333333333333333,False
+C_quals_plus_race,Logistic Regression,0.0,0.0,inf,0.0,False
+C_quals_plus_race,Random Forest,0.009009009009009009,0.0,inf,0.0,False

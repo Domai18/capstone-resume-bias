@@ -1,0 +1,370 @@
+---
+title: "Phase 5: Model Training Under Three Regimes"
+author: "Derrick Omai"
+date: "2026-02-28"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+---
+
+## Overview
+
+This notebook trains classification models under three experimental regimes to test whether excluding demographic features mitigates bias learned from historically biased training data.
+
+### Research Question
+
+> Does excluding demographic features from model inputs mitigate bias in outcomes when models are trained on historically biased data, or do proxy variables (names) enable the reconstruction of discrimination?
+
+### Scope: Race Only
+
+Analysis focuses on **White vs Black** callback disparities, calibrated to Quillian et al. (2017).
+
+### Three Regimes
+
+| Regime | Features | Hypothesis |
+|--------|----------|------------|
+| **A: Qualifications Only** | skills, experience, education | Removing demographics should reduce bias |
+| **B: Qualifications + Names** | Regime A + name (one-hot) | Names may act as proxy, reconstructing bias |
+| **C: Qualifications + Explicit Race** | Regime A + race | Upper bound on discrimination |
+
+---
+
+## Setup
+
+```{python}
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+import pickle
+import json
+import warnings
+warnings.filterwarnings('ignore')
+
+np.random.seed(42)
+
+# Load data with callback labels
+df = pd.read_csv('../data/processed/resumes_callback_labels.csv')
+
+print(f"Total records: {len(df)}")
+print(f"Callback rate: {df['callback'].mean():.1%}")
+print(f"\nCallback rate by race:")
+print(df.groupby('race')['callback'].mean())
+```
+
+## Step 1: Prepare Feature Sets
+
+```{python}
+# Load original processed data with name encodings (race-only design)
+df_full = pd.read_csv('../data/processed/resumes_processed.csv')
+
+# Merge callback labels with full feature set
+df_merged = df_full.merge(
+    df[['ID', 'race', 'callback', 'callback_prob', 'qual_score']],
+    on=['ID', 'race'],
+    how='inner'
+)
+
+print(f"Merged dataset: {len(df_merged)} rows")
+
+# Define feature sets
+qual_features = ['skills_count', 'years_experience', 'education_level']
+
+# Get name columns (one-hot encoded)
+name_cols = [col for col in df_merged.columns if col.startswith('name_')]
+print(f"Name features: {len(name_cols)} columns")
+
+# Create race encoding (binary: black=1, white=0)
+df_merged['race_encoded'] = (df_merged['race'] == 'black').astype(int)
+print("Race-only analysis (no gender) - matches Quillian et al. scope")
+```
+
+## Step 2: Train/Test Split
+
+We split by original resume ID to keep matched pairs together in either train or test, preventing data leakage.
+
+```{python}
+# Get unique resume IDs
+unique_ids = df_merged['ID'].unique()
+print(f"Unique resumes: {len(unique_ids)}")
+
+# Split IDs (not individual rows)
+train_ids, test_ids = train_test_split(unique_ids, test_size=0.2, random_state=42)
+
+# Create train/test sets
+train_df = df_merged[df_merged['ID'].isin(train_ids)].copy()
+test_df = df_merged[df_merged['ID'].isin(test_ids)].copy()
+
+print(f"Training set: {len(train_df)} rows ({len(train_ids)} resumes)")
+print(f"Test set: {len(test_df)} rows ({len(test_ids)} resumes)")
+
+# Verify callback rates are similar
+print(f"\nCallback rate - Train: {train_df['callback'].mean():.1%}")
+print(f"Callback rate - Test: {test_df['callback'].mean():.1%}")
+```
+
+## Step 3: Define Training Function
+
+```{python}
+def train_and_evaluate(train_df, test_df, features, model_class, model_name):
+    """
+    Train a model and return performance metrics.
+
+    Returns dict with metrics and trained model.
+    """
+    X_train = train_df[features].values
+    y_train = train_df['callback'].values
+    X_test = test_df[features].values
+    y_test = test_df['callback'].values
+
+    # Standardize features
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+
+    # Train model
+    model = model_class(random_state=42)
+    model.fit(X_train_scaled, y_train)
+
+    # Predictions
+    y_pred = model.predict(X_test_scaled)
+    y_prob = model.predict_proba(X_test_scaled)[:, 1]
+
+    # Metrics
+    metrics = {
+        'model': model_name,
+        'accuracy': accuracy_score(y_test, y_pred),
+        'precision': precision_score(y_test, y_pred, zero_division=0),
+        'recall': recall_score(y_test, y_pred, zero_division=0),
+        'f1': f1_score(y_test, y_pred, zero_division=0),
+        'auc': roc_auc_score(y_test, y_prob)
+    }
+
+    return {
+        'metrics': metrics,
+        'model': model,
+        'scaler': scaler,
+        'features': features,
+        'y_pred': y_pred,
+        'y_prob': y_prob
+    }
+```
+
+## Step 4: Train Models Under Each Regime
+
+```{python}
+# Define regimes (race only, no gender)
+regimes = {
+    'A_quals_only': qual_features,
+    'B_quals_plus_names': qual_features + name_cols,
+    'C_quals_plus_race': qual_features + ['race_encoded']  # Race only, matches Quillian scope
+}
+
+# Models to train
+model_classes = {
+    'Logistic Regression': LogisticRegression,
+    'Random Forest': RandomForestClassifier
+}
+
+# Store results
+all_results = {}
+trained_models = {}
+
+for regime_name, features in regimes.items():
+    print(f"\n{'='*50}")
+    print(f"REGIME: {regime_name}")
+    print(f"Features: {len(features)}")
+    print('='*50)
+
+    regime_results = []
+
+    for model_name, model_class in model_classes.items():
+        result = train_and_evaluate(train_df, test_df, features, model_class, model_name)
+
+        # Store predictions in test_df for later bias analysis
+        col_pred = f'{regime_name}_{model_name.replace(" ", "_")}_pred'
+        col_prob = f'{regime_name}_{model_name.replace(" ", "_")}_prob'
+        test_df[col_pred] = result['y_pred']
+        test_df[col_prob] = result['y_prob']
+
+        regime_results.append(result['metrics'])
+        trained_models[f'{regime_name}_{model_name}'] = {
+            'model': result['model'],
+            'scaler': result['scaler'],
+            'features': features
+        }
+
+        print(f"\n{model_name}:")
+        print(f"  Accuracy: {result['metrics']['accuracy']:.3f}")
+        print(f"  AUC: {result['metrics']['auc']:.3f}")
+        print(f"  F1: {result['metrics']['f1']:.3f}")
+
+    all_results[regime_name] = pd.DataFrame(regime_results)
+```
+
+## Step 5: Compare Regime Performance
+
+```{python}
+# Combine results
+results_list = []
+for regime_name, regime_df in all_results.items():
+    regime_df['regime'] = regime_name
+    results_list.append(regime_df)
+
+results_df = pd.concat(results_list, ignore_index=True)
+
+# Pivot for comparison
+print("\n=== MODEL PERFORMANCE COMPARISON ===\n")
+comparison = results_df.pivot(index='model', columns='regime', values='auc')
+print("AUC by Regime:")
+print(comparison.round(3))
+
+print("\n\nAccuracy by Regime:")
+comparison_acc = results_df.pivot(index='model', columns='regime', values='accuracy')
+print(comparison_acc.round(3))
+```
+
+## Step 6: Preliminary Bias Analysis on Test Set
+
+```{python}
+print("\n=== PRELIMINARY BIAS ANALYSIS: RACE (White vs Black) ===\n")
+
+# Analyze predictions by race for each regime/model
+bias_results = []
+
+for regime_name in regimes.keys():
+    for model_name in model_classes.keys():
+        col_prob = f'{regime_name}_{model_name.replace(" ", "_")}_prob'
+        col_pred = f'{regime_name}_{model_name.replace(" ", "_")}_pred'
+
+        # Callback rates by race
+        white_rate = test_df[test_df['race'] == 'white'][col_pred].mean()
+        black_rate = test_df[test_df['race'] == 'black'][col_pred].mean()
+
+        # Disparate impact ratio (Black / White)
+        if white_rate > 0:
+            di_ratio = black_rate / white_rate
+        else:
+            di_ratio = 0
+
+        # White:Black ratio (for comparison to training label ratio of 1.36)
+        if black_rate > 0:
+            wb_ratio = white_rate / black_rate
+        else:
+            wb_ratio = float('inf')
+
+        bias_results.append({
+            'regime': regime_name,
+            'model': model_name,
+            'white_callback_rate': white_rate,
+            'black_callback_rate': black_rate,
+            'white_black_ratio': wb_ratio,
+            'disparate_impact': di_ratio,
+            'passes_80_rule': di_ratio >= 0.80
+        })
+
+bias_df = pd.DataFrame(bias_results)
+
+print("Predicted Callback Rates by Race:\n")
+print(bias_df[['regime', 'model', 'white_callback_rate', 'black_callback_rate', 'white_black_ratio']].to_string(index=False))
+
+print("\n\nDisparate Impact Analysis (80% Rule):\n")
+print(bias_df[['regime', 'model', 'disparate_impact', 'passes_80_rule']].to_string(index=False))
+
+print("\n\nReference: Training label White:Black ratio = 1.36 (Quillian et al.)")
+```
+
+## Step 7: Visualize Regime Comparison
+
+```{python}
+import matplotlib.pyplot as plt
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+# Plot 1: White:Black ratio by regime
+ax1 = axes[0]
+pivot_ratio = bias_df.pivot(index='regime', columns='model', values='white_black_ratio')
+pivot_ratio.plot(kind='bar', ax=ax1)
+ax1.axhline(y=1.36, color='red', linestyle='--', label='Training Label Ratio (1.36)')
+ax1.axhline(y=1.0, color='green', linestyle='--', label='Parity (1.0)')
+ax1.set_ylabel('White:Black Callback Ratio')
+ax1.set_title('Predicted Callback Ratio by Regime')
+ax1.legend(loc='upper right')
+ax1.set_xticklabels(ax1.get_xticklabels(), rotation=45, ha='right')
+
+# Plot 2: Disparate Impact by regime
+ax2 = axes[1]
+pivot_di = bias_df.pivot(index='regime', columns='model', values='disparate_impact')
+pivot_di.plot(kind='bar', ax=ax2)
+ax2.axhline(y=0.80, color='red', linestyle='--', label='80% Rule Threshold')
+ax2.axhline(y=1.0, color='green', linestyle='--', label='Parity')
+ax2.set_ylabel('Disparate Impact Ratio')
+ax2.set_title('Disparate Impact by Regime')
+ax2.legend(loc='lower right')
+ax2.set_xticklabels(ax2.get_xticklabels(), rotation=45, ha='right')
+
+plt.tight_layout()
+plt.savefig('../results/figures/regime_comparison.png', dpi=150, bbox_inches='tight')
+plt.show()
+```
+
+## Step 8: Save Outputs
+
+```{python}
+# Save trained models
+with open('../data/processed/trained_models_v2.pkl', 'wb') as f:
+    pickle.dump(trained_models, f)
+print("Saved: data/processed/trained_models_v2.pkl")
+
+# Save performance metrics
+results_df.to_csv('../results/tables/model_performance_v2.csv', index=False)
+print("Saved: results/tables/model_performance_v2.csv")
+
+# Save bias analysis
+bias_df.to_csv('../results/tables/preliminary_bias_analysis.csv', index=False)
+print("Saved: results/tables/preliminary_bias_analysis.csv")
+
+# Save test set with predictions for detailed analysis
+test_df.to_csv('../data/processed/test_set_predictions.csv', index=False)
+print("Saved: data/processed/test_set_predictions.csv")
+```
+
+## Summary
+
+### Key Findings (Preliminary)
+
+```{python}
+print("=== SUMMARY ===\n")
+
+# Training label baseline
+print("Training Label Baseline:")
+print(f"  White:Black ratio in labels: 1.36 (by construction)\n")
+
+# Results by regime
+print("Predicted White:Black Ratios:")
+for regime in ['A_quals_only', 'B_quals_plus_names', 'C_quals_plus_race']:
+    regime_data = bias_df[bias_df['regime'] == regime]
+    avg_ratio = regime_data['white_black_ratio'].mean()
+    print(f"  {regime}: {avg_ratio:.3f}")
+
+print("\nInterpretation:")
+print("  - Ratio closer to 1.0 = less bias in predictions")
+print("  - Ratio closer to 1.36 = bias reproduced from training labels")
+print("  - Ratio > 1.36 = bias amplified beyond training labels")
+```
+
+### Next Steps
+
+In Phase 6, we will:
+1. Conduct full matched-pair analysis across all resumes
+2. Perform statistical significance tests
+3. Calculate Cohen's d effect sizes
+4. Generate final visualizations

@@ -1,0 +1,4 @@
+regime,avg_wb_ratio,avg_di_ratio,bias_reduction_pct,passes_80_rule
+A_quals_only,1.0,1.0,100.0,True
+B_quals_plus_names,1.5925925925925926,0.645,-12.592592592592617,False
+C_quals_plus_race,2.833333333333333,0.35416666666666663,-248.33333333333337,False

@@ -1,0 +1,551 @@
+---
+title: "Phase 6: Bias Testing (Matched-Pair Audit)"
+author: "Derrick Omai"
+date: "2026-02-28"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+---
+
+## Overview
+
+This notebook conducts the full matched-pair bias audit, comparing model predictions across racial groups to assess whether excluding demographic features mitigates bias learned from historically biased training data.
+
+### Central Research Question
+
+> Does excluding demographic features from model inputs mitigate bias in outcomes when models are trained on historically biased data, or do proxy variables (names) enable the reconstruction of discrimination?
+
+### Scope: Race Only (White vs Black)
+
+Analysis focuses on racial discrimination, calibrated to Quillian et al. (2017) finding that White applicants receive 36% more callbacks than equally qualified Black applicants.
+
+---
+
+## Setup
+
+```{python}
+import pandas as pd
+import numpy as np
+from scipy import stats
+from scipy.special import expit as sigmoid
+import pickle
+import json
+import warnings
+warnings.filterwarnings('ignore')
+
+np.random.seed(42)
+
+# Load callback-labeled data
+df = pd.read_csv('../data/processed/resumes_callback_labels.csv')
+
+# Load full data with name encodings (race-only design)
+df_full = pd.read_csv('../data/processed/resumes_processed.csv')
+
+# Merge
+df_merged = df_full.merge(
+    df[['ID', 'race', 'callback', 'callback_prob', 'qual_score']],
+    on=['ID', 'race'],
+    how='inner'
+)
+
+# Load trained models
+with open('../data/processed/trained_models_v2.pkl', 'rb') as f:
+    trained_models = pickle.load(f)
+
+# Load calibration info
+with open('../data/processed/calibration_results.json', 'r') as f:
+    calibration = json.load(f)
+
+print(f"Records: {len(df_merged)}")
+print(f"Training label White:Black ratio: {calibration['achieved_white_black_ratio']:.3f}")
+```
+
+## Step 1: Generate Predictions for All Records
+
+```{python}
+from sklearn.preprocessing import StandardScaler
+
+# Define feature sets
+qual_features = ['skills_count', 'years_experience', 'education_level']
+name_cols = [col for col in df_merged.columns if col.startswith('name_')]
+
+# Encoding (race only, no gender)
+df_merged['race_encoded'] = (df_merged['race'] == 'black').astype(int)
+
+regimes = {
+    'A_quals_only': qual_features,
+    'B_quals_plus_names': qual_features + name_cols,
+    'C_quals_plus_race': qual_features + ['race_encoded']  # Race only, matches Quillian scope
+}
+
+model_names = ['Logistic Regression', 'Random Forest']
+
+# Generate predictions for each regime/model combination
+for regime_name, features in regimes.items():
+    for model_name in model_names:
+        key = f'{regime_name}_{model_name}'
+        model_data = trained_models[key]
+
+        X = df_merged[features].values
+        X_scaled = model_data['scaler'].transform(X)
+
+        pred_col = f'{regime_name}_{model_name.replace(" ", "_")}_pred'
+        prob_col = f'{regime_name}_{model_name.replace(" ", "_")}_prob'
+
+        df_merged[pred_col] = model_data['model'].predict(X_scaled)
+        df_merged[prob_col] = model_data['model'].predict_proba(X_scaled)[:, 1]
+
+print("Predictions generated for all regime/model combinations.")
+```
+
+## Step 2: Callback Rate Analysis by Race
+
+```{python}
+print("=== CALLBACK RATES BY RACE (White vs Black) ===\n")
+
+# Actual labels (ground truth from training data)
+print("ACTUAL CALLBACK RATES (Training Labels):")
+white_actual = df_merged[df_merged['race']=='white']['callback'].mean()
+black_actual = df_merged[df_merged['race']=='black']['callback'].mean()
+print(f"  White: {white_actual:.1%}")
+print(f"  Black: {black_actual:.1%}")
+print(f"  White:Black ratio: {white_actual / black_actual:.3f} (target: 1.36)")
+
+# Predictions by regime
+print("\n" + "="*60)
+results = []
+
+for regime_name in regimes.keys():
+    for model_name in model_names:
+        pred_col = f'{regime_name}_{model_name.replace(" ", "_")}_pred'
+        prob_col = f'{regime_name}_{model_name.replace(" ", "_")}_prob'
+
+        # By race (PRIMARY ANALYSIS)
+        white_rate = df_merged[df_merged['race'] == 'white'][pred_col].mean()
+        black_rate = df_merged[df_merged['race'] == 'black'][pred_col].mean()
+
+        # Ratios
+        wb_ratio = white_rate / black_rate if black_rate > 0 else float('inf')
+        di_ratio = black_rate / white_rate if white_rate > 0 else 0
+
+        results.append({
+            'regime': regime_name,
+            'model': model_name,
+            'white_rate': white_rate,
+            'black_rate': black_rate,
+            'white_black_ratio': wb_ratio,
+            'disparate_impact': di_ratio,
+            'passes_80_rule': di_ratio >= 0.80
+        })
+
+results_df = pd.DataFrame(results)
+print("\nPREDICTED CALLBACK RATES BY RACE:\n")
+print(results_df[['regime', 'model', 'white_rate', 'black_rate', 'white_black_ratio', 'disparate_impact']].to_string(index=False))
+```
+
+## Step 3: Matched-Pair Analysis
+
+For each original resume, compare predictions across its 2 racial variants (White vs Black).
+
+```{python}
+print("\n=== MATCHED-PAIR ANALYSIS ===\n")
+
+# Group by original resume ID
+matched_results = []
+
+for regime_name in regimes.keys():
+    for model_name in model_names:
+        prob_col = f'{regime_name}_{model_name.replace(" ", "_")}_prob'
+        pred_col = f'{regime_name}_{model_name.replace(" ", "_")}_pred'
+
+        # For each original resume, get predictions for both racial variants
+        resume_groups = df_merged.groupby('ID')
+
+        score_diffs = []
+        pred_diffs = []
+
+        for resume_id, group in resume_groups:
+            if len(group) != 2:  # Expect 2 variants (White, Black)
+                continue
+
+            white_prob = group[group['race'] == 'white'][prob_col].mean()
+            black_prob = group[group['race'] == 'black'][prob_col].mean()
+
+            white_pred = group[group['race'] == 'white'][pred_col].mean()
+            black_pred = group[group['race'] == 'black'][pred_col].mean()
+
+            score_diffs.append(white_prob - black_prob)
+            pred_diffs.append(white_pred - black_pred)
+
+        # Statistics
+        mean_prob_diff = np.mean(score_diffs)
+        std_prob_diff = np.std(score_diffs)
+        cohens_d = mean_prob_diff / std_prob_diff if std_prob_diff > 0 else 0
+
+        # Paired t-test
+        t_stat, p_value = stats.ttest_1samp(score_diffs, 0)
+
+        matched_results.append({
+            'regime': regime_name,
+            'model': model_name,
+            'mean_prob_diff_white_minus_black': mean_prob_diff,
+            'std_prob_diff': std_prob_diff,
+            'cohens_d': cohens_d,
+            't_statistic': t_stat,
+            'p_value': p_value,
+            'significant_at_05': p_value < 0.05
+        })
+
+matched_df = pd.DataFrame(matched_results)
+print("Matched-Pair Probability Differences (White - Black):\n")
+print(matched_df[['regime', 'model', 'mean_prob_diff_white_minus_black', 'cohens_d', 'p_value', 'significant_at_05']].to_string(index=False))
+```
+
+## Step 4: Cohen's d Interpretation
+
+```{python}
+print("\n=== EFFECT SIZE INTERPRETATION ===\n")
+
+def interpret_cohens_d(d):
+    d = abs(d)
+    if d < 0.2:
+        return "negligible"
+    elif d < 0.5:
+        return "small"
+    elif d < 0.8:
+        return "medium"
+    else:
+        return "large"
+
+for _, row in matched_df.iterrows():
+    interpretation = interpret_cohens_d(row['cohens_d'])
+    print(f"{row['regime']} / {row['model']}:")
+    print(f"  Cohen's d = {row['cohens_d']:.3f} ({interpretation} effect)")
+    print(f"  White candidates score {row['mean_prob_diff_white_minus_black']*100:.1f} percentage points higher on average")
+    print()
+```
+
+## Step 5: Chi-Square Tests
+
+Test independence between race and predicted callback.
+
+```{python}
+print("\n=== CHI-SQUARE TESTS ===\n")
+
+chi_results = []
+
+for regime_name in regimes.keys():
+    for model_name in model_names:
+        pred_col = f'{regime_name}_{model_name.replace(" ", "_")}_pred'
+
+        # Contingency table
+        contingency = pd.crosstab(df_merged['race'], df_merged[pred_col])
+
+        chi2, p_value, dof, expected = stats.chi2_contingency(contingency)
+
+        chi_results.append({
+            'regime': regime_name,
+            'model': model_name,
+            'chi2': chi2,
+            'p_value': p_value,
+            'dof': dof,
+            'significant': p_value < 0.05
+        })
+
+chi_df = pd.DataFrame(chi_results)
+print("Chi-Square Test: Race vs Predicted Callback\n")
+print(chi_df.to_string(index=False))
+```
+
+## Step 6: Summary Comparison
+
+```{python}
+print("\n" + "="*70)
+print("SUMMARY: RACIAL BIAS REDUCTION ACROSS REGIMES")
+print("="*70)
+
+# Baseline from training labels
+training_ratio = calibration['achieved_white_black_ratio']
+
+print(f"\nTraining Label White:Black Ratio: {training_ratio:.3f} (Quillian calibration)")
+print("\nPredicted White:Black Ratios by Regime:\n")
+
+summary_data = []
+for regime in ['A_quals_only', 'B_quals_plus_names', 'C_quals_plus_race']:
+    regime_data = results_df[results_df['regime'] == regime]
+    avg_ratio = regime_data['white_black_ratio'].mean()
+    avg_di = regime_data['disparate_impact'].mean()
+
+    # Bias reduction compared to training labels
+    # 100% = full reduction to parity (ratio=1.0)
+    # 0% = no reduction (ratio stays at training level)
+    if training_ratio > 1:
+        bias_reduction = (training_ratio - avg_ratio) / (training_ratio - 1) * 100
+    else:
+        bias_reduction = 0
+
+    summary_data.append({
+        'regime': regime,
+        'avg_wb_ratio': avg_ratio,
+        'avg_di_ratio': avg_di,
+        'bias_reduction_pct': bias_reduction,
+        'passes_80_rule': avg_di >= 0.80
+    })
+
+    print(f"{regime}:")
+    print(f"  White:Black Ratio: {avg_ratio:.3f}")
+    print(f"  Disparate Impact: {avg_di:.3f}")
+    print(f"  Bias Reduction: {bias_reduction:.1f}%")
+    print(f"  Passes 80% Rule: {avg_di >= 0.80}")
+    print()
+
+summary_df = pd.DataFrame(summary_data)
+```
+
+## Step 7: Final Visualizations
+
+```{python}
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+# 1. White:Black Ratio Comparison
+ax1 = axes[0, 0]
+regime_labels = ['A: Quals Only', 'B: Quals + Names', 'C: Quals + Explicit']
+x = np.arange(len(regime_labels))
+width = 0.35
+
+lr_ratios = results_df[results_df['model'] == 'Logistic Regression']['white_black_ratio'].values
+rf_ratios = results_df[results_df['model'] == 'Random Forest']['white_black_ratio'].values
+
+bars1 = ax1.bar(x - width/2, lr_ratios, width, label='Logistic Regression', color='steelblue')
+bars2 = ax1.bar(x + width/2, rf_ratios, width, label='Random Forest', color='coral')
+ax1.axhline(y=training_ratio, color='red', linestyle='--', linewidth=2, label=f'Training Labels ({training_ratio:.2f})')
+ax1.axhline(y=1.0, color='green', linestyle='--', linewidth=2, label='Parity (1.0)')
+ax1.set_ylabel('White:Black Callback Ratio')
+ax1.set_title('Predicted Callback Ratio by Regime')
+ax1.set_xticks(x)
+ax1.set_xticklabels(regime_labels)
+ax1.legend()
+ax1.set_ylim(0, max(training_ratio * 1.2, max(lr_ratios.max(), rf_ratios.max()) * 1.1))
+
+# 2. Disparate Impact
+ax2 = axes[0, 1]
+lr_di = results_df[results_df['model'] == 'Logistic Regression']['disparate_impact'].values
+rf_di = results_df[results_df['model'] == 'Random Forest']['disparate_impact'].values
+
+bars1 = ax2.bar(x - width/2, lr_di, width, label='Logistic Regression', color='steelblue')
+bars2 = ax2.bar(x + width/2, rf_di, width, label='Random Forest', color='coral')
+ax2.axhline(y=0.80, color='red', linestyle='--', linewidth=2, label='80% Rule Threshold')
+ax2.axhline(y=1.0, color='green', linestyle='--', linewidth=2, label='Parity')
+ax2.set_ylabel('Disparate Impact Ratio')
+ax2.set_title('Disparate Impact by Regime')
+ax2.set_xticks(x)
+ax2.set_xticklabels(regime_labels)
+ax2.legend()
+ax2.set_ylim(0, 1.2)
+
+# 3. Cohen's d Effect Size
+ax3 = axes[1, 0]
+lr_d = matched_df[matched_df['model'] == 'Logistic Regression']['cohens_d'].values
+rf_d = matched_df[matched_df['model'] == 'Random Forest']['cohens_d'].values
+
+bars1 = ax3.bar(x - width/2, lr_d, width, label='Logistic Regression', color='steelblue')
+bars2 = ax3.bar(x + width/2, rf_d, width, label='Random Forest', color='coral')
+ax3.axhline(y=0.2, color='orange', linestyle=':', label='Small effect')
+ax3.axhline(y=0.5, color='red', linestyle=':', label='Medium effect')
+ax3.axhline(y=0.8, color='darkred', linestyle=':', label='Large effect')
+ax3.set_ylabel("Cohen's d")
+ax3.set_title('Effect Size (Matched-Pair Score Difference)')
+ax3.set_xticks(x)
+ax3.set_xticklabels(regime_labels)
+ax3.legend()
+
+# 4. Callback Rates by Race (Simple comparison)
+ax4 = axes[1, 1]
+# Compare White vs Black across regimes for Logistic Regression
+regime_names_short = ['A: Quals', 'B: +Names', 'C: +Race']
+white_rates = []
+black_rates = []
+for regime in ['A_quals_only', 'B_quals_plus_names', 'C_quals_plus_race']:
+    pred_col = f'{regime}_Logistic_Regression_pred'
+    white_rates.append(df_merged[df_merged['race']=='white'][pred_col].mean())
+    black_rates.append(df_merged[df_merged['race']=='black'][pred_col].mean())
+
+x = np.arange(len(regime_names_short))
+width = 0.35
+ax4.bar(x - width/2, white_rates, width, label='White', color='steelblue')
+ax4.bar(x + width/2, black_rates, width, label='Black', color='coral')
+ax4.set_ylabel('Predicted Callback Rate')
+ax4.set_title('Callback Rate by Race (Logistic Regression)')
+ax4.set_xticks(x)
+ax4.set_xticklabels(regime_names_short)
+ax4.legend()
+
+plt.tight_layout()
+plt.savefig('../results/figures/bias_analysis_summary.png', dpi=150, bbox_inches='tight')
+plt.show()
+```
+
+## Step 8: Logistic Regression Coefficient Analysis
+
+Examining how coefficients shift across regimes reveals how models encode demographic information.
+
+```{python}
+print("\n=== LOGISTIC REGRESSION COEFFICIENT ANALYSIS ===\n")
+
+for regime_name in regimes.keys():
+    key = f'{regime_name}_Logistic Regression'
+    model_data = trained_models[key]
+    model = model_data['model']
+    features = model_data['features']
+
+    print(f"\n{regime_name}:")
+    print("-" * 40)
+
+    # Get coefficients
+    coefs = pd.DataFrame({
+        'feature': features,
+        'coefficient': model.coef_[0]
+    }).sort_values('coefficient', key=abs, ascending=False)
+
+    # Show top 10 by magnitude
+    print("Top 10 coefficients by magnitude:")
+    print(coefs.head(10).to_string(index=False))
+
+    # For Regime C, highlight the race coefficient
+    if 'race_encoded' in features:
+        race_coef = coefs[coefs['feature'] == 'race_encoded']['coefficient'].values[0]
+        print(f"\n*** Race coefficient: {race_coef:.4f} ***")
+        print("(Negative = disadvantage for Black applicants)")
+
+    # For Regime B, check if name coefficients cluster by race
+    if regime_name == 'B_quals_plus_names':
+        name_coefs = coefs[coefs['feature'].str.startswith('name_')]
+
+        # Identify Black vs White names by checking name lists
+        black_names = ['Jamal', 'Leroy', 'Tyrone', 'Darnell', 'Hakim', 'Rasheed',
+                       'Tremayne', 'Kareem', 'Terrence', 'Jermaine', 'DeShawn', 'Marquis',
+                       'Lakisha', 'Tanisha', 'Aisha', 'Ebony', 'Keisha', 'Tamika',
+                       'Latoya', 'Kenya', 'Precious', 'Imani', 'Aaliyah', 'Shanice']
+
+        black_coef_avg = name_coefs[name_coefs['feature'].apply(
+            lambda x: any(bn in x for bn in black_names))]['coefficient'].mean()
+        white_coef_avg = name_coefs[~name_coefs['feature'].apply(
+            lambda x: any(bn in x for bn in black_names))]['coefficient'].mean()
+
+        print(f"\nName coefficient averages:")
+        print(f"  White names: {white_coef_avg:.4f}")
+        print(f"  Black names: {black_coef_avg:.4f}")
+        print(f"  Difference: {white_coef_avg - black_coef_avg:.4f}")
+        print("(Positive difference = model learned to favor White names)")
+```
+
+## Step 9: Model Disagreement Analysis
+
+Identify resumes where regimes produce different predictions to understand proxy effects.
+
+```{python}
+print("\n=== MODEL DISAGREEMENT ANALYSIS ===\n")
+
+# Compare Regime A vs Regime B predictions (Logistic Regression)
+pred_a = f'A_quals_only_Logistic_Regression_pred'
+pred_b = f'B_quals_plus_names_Logistic_Regression_pred'
+pred_c = f'C_quals_plus_race_Logistic_Regression_pred'
+
+# Find disagreements between A and B
+disagree_ab = df_merged[df_merged[pred_a] != df_merged[pred_b]]
+print(f"Resumes where Regime A and B disagree: {len(disagree_ab)} ({len(disagree_ab)/len(df_merged)*100:.1f}%)")
+
+# Analyze disagreements by race
+if len(disagree_ab) > 0:
+    print("\nDisagreement breakdown by race:")
+    disagree_by_race = disagree_ab.groupby('race').size()
+    print(disagree_by_race)
+
+    # Cases where A says callback but B says no (proxy hurts Black candidates?)
+    a_yes_b_no = disagree_ab[(disagree_ab[pred_a] == 1) & (disagree_ab[pred_b] == 0)]
+    print(f"\nRegime A=callback, Regime B=no callback: {len(a_yes_b_no)}")
+    print(f"  Of these, Black applicants: {len(a_yes_b_no[a_yes_b_no['race']=='black'])}")
+    print(f"  Of these, White applicants: {len(a_yes_b_no[a_yes_b_no['race']=='white'])}")
+
+    # Cases where A says no but B says callback (proxy helps White candidates?)
+    a_no_b_yes = disagree_ab[(disagree_ab[pred_a] == 0) & (disagree_ab[pred_b] == 1)]
+    print(f"\nRegime A=no callback, Regime B=callback: {len(a_no_b_yes)}")
+    print(f"  Of these, Black applicants: {len(a_no_b_yes[a_no_b_yes['race']=='black'])}")
+    print(f"  Of these, White applicants: {len(a_no_b_yes[a_no_b_yes['race']=='white'])}")
+
+print("\nInterpretation:")
+print("If names hurt Black candidates: more Black applicants in 'A=yes, B=no' category")
+print("If names help White candidates: more White applicants in 'A=no, B=yes' category")
+```
+
+## Step 10: Save Final Results
+
+```{python}
+# Save all results
+results_df.to_csv('../results/tables/callback_rates_by_regime.csv', index=False)
+matched_df.to_csv('../results/tables/matched_pair_analysis.csv', index=False)
+chi_df.to_csv('../results/tables/chi_square_tests.csv', index=False)
+summary_df.to_csv('../results/tables/bias_summary.csv', index=False)
+
+print("Saved:")
+print("  - results/tables/callback_rates_by_regime.csv")
+print("  - results/tables/matched_pair_analysis.csv")
+print("  - results/tables/chi_square_tests.csv")
+print("  - results/tables/bias_summary.csv")
+print("  - results/figures/bias_analysis_summary.png")
+```
+
+## Conclusions
+
+```{python}
+print("="*70)
+print("CONCLUSIONS")
+print("="*70)
+
+print(f"""
+RESEARCH QUESTION:
+Does excluding demographic features from model inputs mitigate racial bias
+when models are trained on historically biased data?
+
+SCOPE:
+Race only (White vs Black) - calibrated to Quillian et al. (2017)
+
+TRAINING DATA:
+- Callback labels reflect documented hiring discrimination
+- White:Black ratio = {training_ratio:.3f} (36% advantage for White applicants)
+
+KEY FINDINGS:
+""")
+
+for _, row in summary_df.iterrows():
+    regime_nice = row['regime'].replace('_', ' ').replace('A ', 'A: ').replace('B ', 'B: ').replace('C ', 'C: ')
+    print(f"  {regime_nice}:")
+    print(f"    - Predicted W:B ratio: {row['avg_wb_ratio']:.3f}")
+    print(f"    - Bias reduction: {row['bias_reduction_pct']:.1f}% vs training labels")
+    print(f"    - Passes 80% rule: {row['passes_80_rule']}")
+    print()
+
+print("""
+INTERPRETATION:
+- Regime A (qualifications only): Tests "just remove race" debiasing approach
+- Regime B (+ names): Tests whether names enable proxy discrimination
+- Regime C (+ explicit race): Upper bound - direct access to race
+
+KEY COMPARISON:
+- If Regime B ≈ Regime A: Names do NOT effectively reconstruct racial bias
+- If Regime B ≈ Regime C: Names DO act as proxies, reconstructing discrimination
+- If Regime A ≈ 1.0: Removing demographics successfully eliminates bias
+
+PRACTICAL IMPLICATION:
+Companies that simply "remove race from the model" may or may not achieve
+fairness, depending on whether proxy variables (like names) are present.
+""")
+```

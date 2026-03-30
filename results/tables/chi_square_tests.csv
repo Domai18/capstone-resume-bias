@@ -1,0 +1,7 @@
+regime,model,chi2,p_value,dof,significant
+A_quals_only,Logistic Regression,0.0,1.0,1,False
+A_quals_only,Random Forest,0.0,1.0,1,False
+B_quals_plus_names,Logistic Regression,0.0,1.0,1,False
+B_quals_plus_names,Random Forest,6.757909407665505,0.009333304314829637,1,True
+C_quals_plus_race,Logistic Regression,0.2509107468123862,0.616434521503321,1,False
+C_quals_plus_race,Random Forest,3.756818181818182,0.052592568254735336,1,False

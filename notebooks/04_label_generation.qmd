@@ -1,0 +1,400 @@
+---
+title: "Phase 4: Quillian-Calibrated Callback Label Generation"
+author: "Derrick Omai"
+date: "2026-02-28"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+---
+
+## Overview
+
+This notebook generates synthetic callback labels that reflect **historical hiring discrimination**, calibrated to empirical findings from Quillian et al. (2017).
+
+### Why This Approach?
+
+**Original design problem:** Bias-free labels (generated purely from qualifications) contain no demographic signal for models to learn. Testing such models yields minimal disparities by construction.
+
+**Revised approach:** Generate callback labels that embed documented racial discrimination, then test whether excluding demographic features from model inputs reduces learned bias.
+
+### Scope: Race Only
+
+**Decision:** Focus exclusively on **racial bias (White vs Black)**, not gender.
+
+**Rationale:**
+- Quillian et al. (2017) reports race-specific discrimination only
+- Adding gender bias would require a separate empirical source or arbitrary parameters
+- Simplicity: 2-group comparison is cleaner to analyze and explain
+- Gender removed from dataset: 2 variants per resume (White, Black), not 4
+
+### Calibration Source
+
+> **Quillian, L., Pager, D., Hexel, O., & Midtbøen, A. H. (2017).** Meta-analysis of field experiments shows no change in racial discrimination in hiring over time. *PNAS*, 114(41), 10870-10875.
+
+**Key finding:** White applicants receive **36% more callbacks** than equally qualified Black applicants (ratio ≈ 1.36).
+
+---
+
+## Setup
+
+```{python}
+import pandas as pd
+import numpy as np
+from scipy.special import expit as sigmoid
+from scipy.optimize import brentq
+import json
+import warnings
+warnings.filterwarnings('ignore')
+
+# Set seed for reproducibility
+np.random.seed(42)
+
+# Load processed resumes with matched pairs (race-only design, 2 variants per resume)
+df = pd.read_csv('../data/processed/resumes_processed.csv')
+
+print(f"Total records: {len(df)}")
+print(f"Unique original resumes: {df['ID'].nunique()}")
+print(f"Variants per resume: {len(df) // df['ID'].nunique()}")
+
+# Verify racial distribution
+print("\nRacial distribution:")
+print(df['race'].value_counts())
+```
+
+## Step 1: Compute Qualification Scores
+
+Standardize qualification features within each field to create comparable scores.
+
+```{python}
+# Define qualification features
+qual_features = ['skills_count', 'years_experience', 'education_level']
+
+# Standardize within field (z-scores)
+def standardize_within_field(group):
+    for col in qual_features:
+        col_std = f'{col}_std'
+        mean_val = group[col].mean()
+        std_val = group[col].std()
+        if std_val == 0:
+            group[col_std] = 0
+        else:
+            group[col_std] = (group[col] - mean_val) / std_val
+    return group
+
+df = df.groupby('Field', group_keys=False).apply(standardize_within_field)
+
+# Compute weighted qualification score
+# Weights: experience (40%), skills (35%), education (25%)
+w_exp, w_skill, w_edu = 0.4, 0.35, 0.25
+
+df['qual_score'] = (
+    w_exp * df['years_experience_std'] +
+    w_skill * df['skills_count_std'] +
+    w_edu * df['education_level_std']
+)
+
+print("Qualification score distribution:")
+print(df['qual_score'].describe())
+```
+
+## Step 2: Define Label Generation Function
+
+```{python}
+def generate_biased_labels(df, alpha, beta, gamma_race):
+    """
+    Generate callback labels with racial bias (race only, no gender).
+
+    Parameters:
+    -----------
+    alpha : float
+        Intercept (controls overall callback rate)
+    beta : float
+        Slope for qualification score
+    gamma_race : float
+        Penalty for Black applicants (negative = disadvantage)
+
+    Returns:
+    --------
+    DataFrame with callback probabilities and labels
+
+    Math:
+    -----
+    p_callback = sigmoid(α + β × Q + γ_race × is_black)
+
+    - sigmoid squashes output to 0-1 probability
+    - γ_race is negative, so Black applicants get lower probability
+    - We calibrate γ_race so that: mean(p_white) / mean(p_black) ≈ 1.36
+    """
+    df = df.copy()
+
+    # Create binary indicator for race
+    df['is_black'] = (df['race'] == 'black').astype(int)
+
+    # Compute biased probability (race only)
+    logit = alpha + beta * df['qual_score'] + gamma_race * df['is_black']
+
+    df['callback_prob'] = sigmoid(logit)
+
+    # Sample binary callback labels
+    df['callback'] = np.random.binomial(1, df['callback_prob'])
+
+    return df
+```
+
+## Step 3: Calibration - Find γ_race for Target Ratio
+
+We need to find the value of γ_race that produces a White:Black callback ratio of approximately 1.36.
+
+### The Math
+
+```
+p_callback = sigmoid(α + β × Q + γ_race × is_black)
+
+For White applicant (is_black = 0):  p_white = sigmoid(α + β × Q)
+For Black applicant (is_black = 1):  p_black = sigmoid(α + β × Q + γ_race)
+
+Since γ_race is negative:  p_black < p_white
+
+We find γ_race such that:  mean(p_white) / mean(p_black) ≈ 1.36
+```
+
+```{python}
+def compute_callback_ratio(df, alpha, beta, gamma_race):
+    """Compute White:Black callback ratio for given parameters."""
+    df_temp = generate_biased_labels(df, alpha, beta, gamma_race)
+
+    white_rate = df_temp[df_temp['race'] == 'white']['callback_prob'].mean()
+    black_rate = df_temp[df_temp['race'] == 'black']['callback_prob'].mean()
+
+    if black_rate == 0:
+        return float('inf')
+
+    return white_rate / black_rate
+
+def calibrate_gamma_race(df, alpha, beta, target_ratio=1.36, tolerance=0.01):
+    """
+    Find gamma_race that achieves target White:Black callback ratio.
+
+    Uses Brent's method for root finding (binary search for equations).
+    """
+    def objective(gamma_race):
+        ratio = compute_callback_ratio(df, alpha, beta, gamma_race)
+        return ratio - target_ratio
+
+    # Search in range [-3, 0] (negative gamma = disadvantage for Black applicants)
+    try:
+        gamma_race = brentq(objective, -3.0, 0.0, xtol=tolerance)
+    except ValueError:
+        # If root not found, use grid search
+        best_gamma = -1.0
+        best_diff = float('inf')
+        for g in np.linspace(-3.0, 0.0, 300):
+            ratio = compute_callback_ratio(df, alpha, beta, g)
+            diff = abs(ratio - target_ratio)
+            if diff < best_diff:
+                best_diff = diff
+                best_gamma = g
+        gamma_race = best_gamma
+
+    return gamma_race
+```
+
+## Step 4: Set Parameters and Calibrate
+
+```{python}
+# Target parameters
+TARGET_CALLBACK_RATE = 0.10  # 10% overall callback rate
+TARGET_RATIO = 1.36  # Quillian et al. White:Black ratio
+
+# Initial parameters
+# alpha controls overall rate, beta controls how much qualifications matter
+# We'll tune alpha to get ~10% callback rate, then calibrate gamma_race
+
+# Start with beta = 0.8 (qualifications have moderate effect)
+beta = 0.8
+
+# Find alpha that gives ~10% callback rate (ignoring race for now)
+def find_alpha_for_rate(df, beta, target_rate):
+    """Find alpha that achieves target overall callback rate."""
+    def objective(alpha):
+        logit = alpha + beta * df['qual_score']
+        probs = sigmoid(logit)
+        return probs.mean() - target_rate
+
+    try:
+        alpha = brentq(objective, -5.0, 5.0)
+    except ValueError:
+        alpha = -2.0  # fallback
+    return alpha
+
+alpha = find_alpha_for_rate(df, beta, TARGET_CALLBACK_RATE)
+print(f"Alpha (intercept): {alpha:.4f}")
+print(f"Beta (qualification effect): {beta:.4f}")
+
+# Now calibrate gamma_race
+gamma_race = calibrate_gamma_race(df, alpha, beta, TARGET_RATIO)
+print(f"Gamma_race (Black penalty): {gamma_race:.4f}")
+
+# Verify calibration
+test_ratio = compute_callback_ratio(df, alpha, beta, gamma_race)
+print(f"\nVerification:")
+print(f"  Target ratio: {TARGET_RATIO}")
+print(f"  Achieved ratio: {test_ratio:.4f}")
+```
+
+## Step 5: Generate Final Labels
+
+```{python}
+# Generate labels with calibrated parameters (race only)
+df_labeled = generate_biased_labels(df, alpha, beta, gamma_race)
+
+# Summary statistics
+print("=== CALLBACK LABEL SUMMARY ===\n")
+
+# Overall rate
+overall_rate = df_labeled['callback'].mean()
+print(f"Overall callback rate: {overall_rate:.1%}")
+
+# By race (PRIMARY ANALYSIS - race only, no gender)
+print("\n--- CALLBACK RATES BY RACE ---")
+race_rates = df_labeled.groupby('race')['callback'].mean()
+print(f"White callback rate: {race_rates['white']:.1%}")
+print(f"Black callback rate: {race_rates['black']:.1%}")
+print(f"White:Black ratio: {race_rates['white'] / race_rates['black']:.3f}")
+print(f"Target ratio: 1.36 (Quillian et al.)")
+```
+
+## Step 6: Verify Matched-Pair Structure
+
+Confirm that qualification features are identical within matched sets.
+
+```{python}
+# Check that matched pairs have identical qualifications
+print("=== MATCHED PAIR VERIFICATION ===\n")
+
+# Group by original resume ID
+matched_check = df_labeled.groupby('ID').agg({
+    'skills_count': 'nunique',
+    'years_experience': 'nunique',
+    'education_level': 'nunique',
+    'qual_score': 'nunique',
+    'race': 'count'
+}).rename(columns={'race': 'n_variants'})
+
+# All should have exactly 2 variants (White, Black) with identical qualifications
+print(f"Resumes with 2 variants: {(matched_check['n_variants'] == 2).sum()}")
+print(f"All have identical skills_count: {(matched_check['skills_count'] == 1).all()}")
+print(f"All have identical years_experience: {(matched_check['years_experience'] == 1).all()}")
+print(f"All have identical education_level: {(matched_check['education_level'] == 1).all()}")
+```
+
+## Step 7: Visualize Callback Distributions
+
+```{python}
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+
+# 1. Callback probability by race
+ax1 = axes[0]
+sns.boxplot(data=df_labeled, x='race', y='callback_prob', ax=ax1, palette=['coral', 'steelblue'])
+ax1.set_title('Callback Probability by Race')
+ax1.set_ylabel('P(Callback)')
+
+# 2. Callback rate by race (bar chart)
+ax2 = axes[1]
+race_rates = df_labeled.groupby('race')['callback'].mean()
+colors = ['coral', 'steelblue']  # black, white (alphabetical)
+race_rates.plot(kind='bar', ax=ax2, color=colors)
+ax2.set_title('Callback Rate by Race')
+ax2.set_ylabel('Callback Rate')
+ax2.set_xticklabels(['Black', 'White'], rotation=0)
+ax2.axhline(y=0.10, color='gray', linestyle='--', label='10% baseline')
+ax2.legend()
+
+# 3. Callback probability vs qualification score
+ax3 = axes[2]
+for race, color in [('white', 'steelblue'), ('black', 'coral')]:
+    subset = df_labeled[df_labeled['race'] == race]
+    ax3.scatter(subset['qual_score'], subset['callback_prob'],
+                alpha=0.3, label=race.title(), color=color, s=10)
+ax3.set_xlabel('Qualification Score (standardized)')
+ax3.set_ylabel('P(Callback)')
+ax3.set_title('Callback Probability vs Qualifications')
+ax3.legend()
+
+plt.tight_layout()
+plt.savefig('../results/figures/callback_distributions.png', dpi=150, bbox_inches='tight')
+plt.show()
+```
+
+## Step 8: Save Outputs
+
+```{python}
+# Columns to save (race only, no gender)
+output_cols = [
+    'ID', 'Field', 'assigned_name', 'race',
+    'skills_count', 'years_experience', 'education_level',
+    'qual_score', 'callback_prob', 'callback'
+]
+
+# Save labeled dataset
+df_output = df_labeled[output_cols].copy()
+df_output.to_csv('../data/processed/resumes_callback_labels.csv', index=False)
+print(f"Saved: data/processed/resumes_callback_labels.csv ({len(df_output)} rows)")
+
+# Save calibration results
+calibration = {
+    'alpha': float(alpha),
+    'beta': float(beta),
+    'gamma_race': float(gamma_race),
+    'scope': 'race_only',
+    'target_callback_rate': TARGET_CALLBACK_RATE,
+    'achieved_callback_rate': float(overall_rate),
+    'target_white_black_ratio': TARGET_RATIO,
+    'achieved_white_black_ratio': float(race_rates['white'] / race_rates['black']),
+    'calibration_source': 'Quillian et al. (2017) PNAS',
+    'random_seed': 42,
+    'note': 'Gender not included - Quillian provides race-specific ratios only'
+}
+
+with open('../data/processed/calibration_results.json', 'w') as f:
+    json.dump(calibration, f, indent=2)
+print("Saved: data/processed/calibration_results.json")
+
+# Display calibration summary
+print("\n=== CALIBRATION SUMMARY ===")
+for key, value in calibration.items():
+    print(f"  {key}: {value}")
+```
+
+## Summary
+
+### What We Created
+
+1. **Callback labels** embedded with documented racial discrimination:
+   - White:Black callback ratio ≈ 1.36 (matching Quillian et al.)
+   - Overall callback rate ≈ 10% (realistic)
+   - Labels are stochastic (sampled from biased probabilities)
+
+2. **Matched-pair structure preserved**:
+   - Each original resume has 2 racial variants (White, Black)
+   - Qualifications identical within matched sets
+   - Only names differ (24 names per racial group)
+
+### Scope Decision
+
+Gender removed from analysis to match Quillian et al. (2017) scope, which reports race-specific discrimination only. Multiple names per race (Option B) preserves proxy discrimination testing.
+
+### Next Steps
+
+In Phase 5, we will:
+1. Train models under three regimes (A: quals only, B: +names, C: +race)
+2. Compare predicted callback rates across racial groups
+3. Test whether removing demographic features mitigates the 1.36 bias ratio

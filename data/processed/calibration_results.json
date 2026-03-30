@@ -1,0 +1,13 @@
+{
+  "alpha": -2.302460362497859,
+  "beta": 0.8,
+  "gamma_race": -0.34885887489804973,
+  "scope": "race_only",
+  "target_callback_rate": 0.1,
+  "achieved_callback_rate": 0.08711433756805807,
+  "target_white_black_ratio": 1.36,
+  "achieved_white_black_ratio": 1.526315789473684,
+  "calibration_source": "Quillian et al. (2017) PNAS",
+  "random_seed": 42,
+  "note": "Gender not included - Quillian provides race-specific ratios only"
+}

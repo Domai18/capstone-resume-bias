@@ -8,7 +8,9 @@ This research investigates a critical question: **Does excluding demographic fea
 
 The significance of this question extends beyond academic interest. The Equal Employment Opportunity Commission's 80% rule establishes legal thresholds for discriminatory impact, and companies deploying biased hiring algorithms face both legal liability and reputational damage. Moreover, Quillian, Pager, Hexel, and Midtbøen's (2017) meta-analysis of 28 field experiments found that racial discrimination in hiring callbacks has remained constant since 1989, with White applicants receiving 36% more callbacks than equally qualified Black applicants. If automated systems simply learn and perpetuate this discrimination, they offer no improvement over human decision-making—and may even provide a veneer of objectivity that makes discrimination harder to detect and challenge.
 
-Our thesis is this: **Removing explicit demographic variables from model inputs is insufficient to eliminate bias learned from discriminatory training data, because proxy variables such as names leak racial information that allows models to reconstruct discriminatory patterns.** We test this thesis by training machine learning models on callback labels calibrated to documented discrimination rates, then comparing bias levels across three experimental regimes: qualifications only, qualifications plus names, and qualifications plus explicit race. We adopt an individual fairness criterion—candidates with identical qualifications should receive identical callback probabilities regardless of race—and measure outcomes using disparate impact ratios aligned with EEOC legal standards.
+Our thesis is this: **Removing explicit demographic variables from model inputs is insufficient to eliminate bias learned from discriminatory training data, because proxy variables such as names leak racial information that allows models to reconstruct discriminatory patterns.**
+
+We test this thesis through a controlled simulation study comparing how different feature configurations affect bias transmission from training labels to model predictions. Crucially, all three experimental regimes—qualifications only, qualifications plus names, and qualifications plus explicit race—are trained on identical callback labels using the same training/test split and random seed. The only variable that changes is which features each model can access. This design isolates the effect of feature availability on learned bias, eliminating confounds from training differences. We adopt an individual fairness criterion—candidates with identical qualifications should receive identical callback probabilities regardless of race—and measure outcomes using disparate impact ratios aligned with EEOC legal standards.
 
 The findings of this research have direct implications for organizations deploying automated hiring tools and for policymakers evaluating fairness claims in algorithmic decision-making.
 
@@ -62,15 +64,19 @@ We selected option 3 because it addresses the practically relevant question: giv
 
 **Bias measurement** employs multiple metrics: callback rate disparities by race, disparate impact ratios (with 0.80 threshold per EEOC guidelines), White-to-Black callback ratios (compared against 1.36 baseline), Cohen's d effect sizes, and chi-square tests for statistical significance. The key comparison is between regimes—whether Regime A shows less bias than Regime C, and whether Regime B falls between them—rather than absolute numbers.
 
+**Coefficient analysis** provides additional insight for Logistic Regression models. By examining how coefficients shift across regimes, we can observe: (1) in Regime C, the race coefficient directly quantifies learned discrimination; (2) in Regime B, name coefficients may cluster by racial association, revealing proxy encoding; (3) in Regime A, no demographic signal should appear in coefficients.
+
+**Disagreement analysis** identifies resumes where regimes produce different predictions. For example, cases where Regime A predicts "callback" but Regime B predicts "no callback" reveal exactly which candidates are affected by name-based proxy discrimination. This provides concrete insight into how proxy variables alter outcomes for specific individuals.
+
 ## Visualizations
 
-The visualization strategy serves both exploratory and communicative purposes. During exploratory analysis, distribution plots reveal qualification feature variation across fields and demographic groups, confirming feature extraction produces reasonable distributions without severe outliers.
+Our visualization strategy is still being developed, but we plan to focus on two key areas:
 
-Bias calibration visualizations demonstrate successful implementation of Quillian-based discrimination. Scatter plots of callback probability versus qualification score, colored by race, reveal parallel but vertically offset curves—White and Black applicants with identical qualifications receive systematically different callback probabilities.
+**1. Regime Comparison Charts:** Bar charts comparing the White-to-Black callback ratio across regimes A, B, and C. Reference lines will mark the training label ratio (1.36) and parity (1.00), making it easy to see which regime reduces bias most effectively.
 
-Model comparison visualizations form the core output. Grouped bar charts display White-to-Black callback ratios across regimes, with reference lines marking training label ratio (1.36) and parity (1.00). These immediately reveal whether removing demographics reduces bias, whether names enable proxy discrimination, and how explicit race access compares. Similar charts present disparate impact ratios with 80% threshold marked. Cohen's d plots quantify effect size magnitude with conventional benchmarks (0.2 small, 0.5 medium, 0.8 large).
+**2. Disparate Impact Visualization:** Charts displaying disparate impact ratios for each regime, with the EEOC 80% threshold marked to indicate legal compliance boundaries.
 
-Summary visualizations synthesize findings across regimes and models, combining callback rates, disparate impact ratios, effect sizes, and bias reduction percentages into unified displays. All figures maintain consistent color coding—steel blue for White, coral for Black—ensuring immediate interpretability.
+We will finalize the visualization approach as we complete the analysis phases and better understand what visual representations most clearly communicate our findings.
 
 ## References
 

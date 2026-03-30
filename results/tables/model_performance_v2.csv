@@ -1,0 +1,7 @@
+model,accuracy,precision,recall,f1,auc,regime
+Logistic Regression,0.9414414414414415,0.0,0.0,0.0,0.6494295178505706,A_quals_only
+Random Forest,0.9414414414414415,0.0,0.0,0.0,0.583916083916084,A_quals_only
+Logistic Regression,0.9414414414414415,0.0,0.0,0.0,0.5800515274199486,B_quals_plus_names
+Random Forest,0.9234234234234234,0.0,0.0,0.0,0.5964298859035702,B_quals_plus_names
+Logistic Regression,0.9414414414414415,0.0,0.0,0.0,0.6267942583732058,C_quals_plus_race
+Random Forest,0.9369369369369369,0.0,0.0,0.0,0.5706661759293339,C_quals_plus_race
