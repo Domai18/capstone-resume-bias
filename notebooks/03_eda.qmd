@@ -1,0 +1,376 @@
+---
+title: "Phase 3: Exploratory Data Analysis"
+author: "Derrick Omai"
+date: "2026-03-02"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+---
+
+## Overview
+
+This notebook explores the processed data before modeling:
+
+1. Feature distributions across fields
+2. Racial group balance (White vs Black)
+3. Qualification score analysis
+4. Matched pair verification
+
+### Scope: Race Only
+
+**Decision:** Focus exclusively on **racial bias (White vs Black)**, not gender.
+
+**Rationale:**
+- Quillian et al. (2017) reports race-specific discrimination only
+- Adding gender bias would require a separate empirical source
+- Simplicity: 2-group comparison is cleaner to analyze and explain
+- 2 variants per resume (White, Black), not 4
+
+### Key Concepts
+
+**Matched Pairs:** Each original resume was duplicated twice—once with a distinctively White name (e.g., Greg Baker, Emily Walsh) and once with a distinctively Black name (e.g., Jamal Washington, Lakisha Washington). Both copies have identical qualifications (skills, experience, education); only names differ. This design allows us to isolate demographic bias: if a model scores "Jamal Washington" differently than "Greg Baker" with the same qualifications, that difference is pure bias.
+
+**Name Assignment:** 24 names per racial group, selected from SSA and Census data indicating strong racial associations. Multiple names per race preserves proxy discrimination testing (vs. single name which would perfectly encode race).
+
+---
+
+## Setup
+
+```{python}
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+from scipy import stats
+
+# Paths
+PROJECT_ROOT = Path.cwd().parent
+PROCESSED_DATA = PROJECT_ROOT / "data" / "processed"
+FIGURES_DIR = PROJECT_ROOT / "results" / "figures"
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+
+# Load processed data (race-only design)
+df = pd.read_csv(PROCESSED_DATA / "resumes_processed.csv")
+
+print(f"Loaded {len(df)} records (matched pairs)")
+print(f"Unique original resumes: {df['ID'].nunique()}")
+print(f"Variants per resume: {len(df) // df['ID'].nunique()}")
+```
+
+## 1. Dataset Overview
+
+```{python}
+print("Dataset Shape:", df.shape)
+print("\nRecords per field:")
+print(df['Field'].value_counts())
+print(f"\nRacial distribution:")
+print(df['race'].value_counts())
+```
+
+```{python}
+# Basic statistics for extracted features
+print("Feature Statistics:\n")
+feature_cols = ['skills_count', 'years_experience', 'education_level']
+if 'qualification_score' in df.columns:
+    feature_cols.append('qualification_score')
+print(df[feature_cols].describe().round(2))
+```
+
+## 2. Feature Distributions by Field
+
+```{python}
+fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+
+features = ['skills_count', 'years_experience', 'education_level']
+titles = ['Skills Count', 'Years of Experience', 'Education Level']
+
+for ax, feature, title in zip(axes, features, titles):
+    df.groupby('Field')[feature].mean().plot(kind='bar', ax=ax, color='steelblue', edgecolor='black')
+    ax.set_title(f'Average {title} by Field')
+    ax.set_xlabel('')
+    ax.set_ylabel(title)
+    ax.tick_params(axis='x', rotation=45)
+
+plt.tight_layout()
+plt.savefig(FIGURES_DIR / 'features_by_field.png', dpi=150, bbox_inches='tight')
+plt.show()
+```
+
+```{python}
+# Detailed breakdown
+print("Average Features by Field:\n")
+print(df.groupby('Field')[['skills_count', 'years_experience', 'education_level']].mean().round(2))
+```
+
+### Education Level Reference
+
+| Value | Meaning |
+|-------|---------|
+| 1 | High School / No degree mentioned |
+| 2 | Associate's degree |
+| 3 | Bachelor's degree |
+| 4 | Master's degree |
+| 5 | Doctorate / PhD |
+
+## 3. Racial Distribution
+
+```{python}
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+# Records by race
+race_counts = df['race'].value_counts()
+colors = ['steelblue', 'coral']
+race_counts.plot(kind='bar', ax=axes[0], color=colors, edgecolor='black')
+axes[0].set_title('Records by Race')
+axes[0].set_xlabel('')
+axes[0].set_ylabel('Count')
+axes[0].set_xticklabels(['Black', 'White'], rotation=0)
+
+# Records by race and field
+race_field = df.groupby(['Field', 'race']).size().unstack()
+race_field.plot(kind='bar', ax=axes[1], color=colors, edgecolor='black')
+axes[1].set_title('Records by Field and Race')
+axes[1].set_xlabel('')
+axes[1].legend(title='Race')
+axes[1].tick_params(axis='x', rotation=45)
+
+plt.tight_layout()
+plt.savefig(FIGURES_DIR / 'racial_distribution.png', dpi=150, bbox_inches='tight')
+plt.show()
+```
+
+```{python}
+print("Racial Distribution:\n")
+print(df['race'].value_counts())
+print(f"\nEach race should have {len(df)//2} records (equal due to matched pairs)")
+```
+
+## 4. Qualification Score Distribution
+
+```{python}
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+# Overall distribution
+if 'qualification_score' in df.columns:
+    score_col = 'qualification_score'
+else:
+    # Compute if not present
+    df['qualification_score'] = (
+        0.35 * df['skills_count'] +
+        0.40 * df['years_experience'] +
+        0.25 * df['education_level']
+    )
+    score_col = 'qualification_score'
+
+df[score_col].hist(bins=30, ax=axes[0], color='steelblue', edgecolor='black')
+axes[0].set_title('Qualification Score Distribution')
+axes[0].set_xlabel('Qualification Score')
+axes[0].set_ylabel('Frequency')
+axes[0].axvline(x=df[score_col].median(), color='red', linestyle='--', label='Median')
+axes[0].legend()
+
+# By race (should be identical for matched pairs)
+for race, color in [('white', 'steelblue'), ('black', 'coral')]:
+    subset = df[df['race'] == race]
+    axes[1].hist(subset[score_col], bins=20, alpha=0.6, label=race.title(), color=color, edgecolor='black')
+
+axes[1].set_title('Qualification Score by Race')
+axes[1].set_xlabel('Qualification Score')
+axes[1].set_ylabel('Frequency')
+axes[1].legend()
+
+plt.tight_layout()
+plt.savefig(FIGURES_DIR / 'qualification_scores.png', dpi=150, bbox_inches='tight')
+plt.show()
+```
+
+```{python}
+print("Qualification Score by Race:\n")
+print(df.groupby('race')[score_col].describe().round(2))
+print("\n(Scores should be identical across races due to matched-pair design)")
+```
+
+## 5. Matched Pair Verification
+
+Confirm that matched pairs have identical qualification features. Each original resume should appear exactly 2 times (once per race). Both versions must have identical values for qualification features.
+
+```{python}
+# Check a sample of matched pairs
+sample_ids = df['ID'].unique()[:3]
+
+print("Sample Matched Pairs (same qualifications, different names):\n")
+for orig_id in sample_ids:
+    matches = df[df['ID'] == orig_id][['assigned_name', 'race', 'skills_count', 'years_experience', 'education_level']]
+    print(f"Resume ID: {orig_id}")
+    print(matches.to_string(index=False))
+    print()
+```
+
+```{python}
+# Verify ALL matched pairs have identical features
+def check_matched_pairs(df):
+    """Verify that matched pairs have identical qualification features."""
+    features_to_check = ['skills_count', 'years_experience', 'education_level']
+    if 'qualification_score' in df.columns:
+        features_to_check.append('qualification_score')
+
+    issues = 0
+    for orig_id in df['ID'].unique():
+        group = df[df['ID'] == orig_id][features_to_check]
+        if not (group.nunique() == 1).all():
+            issues += 1
+
+    return issues
+
+issues = check_matched_pairs(df)
+print(f"Matched pair verification: {issues} issues found")
+if issues == 0:
+    print("[OK] All matched pairs have identical qualification features")
+else:
+    print("[WARNING] Some matched pairs have inconsistent features!")
+```
+
+```{python}
+# Verify each resume has exactly 2 variants (White and Black)
+variants_per_resume = df.groupby('ID').size()
+print(f"\nVariants per resume:")
+print(f"  Min: {variants_per_resume.min()}")
+print(f"  Max: {variants_per_resume.max()}")
+print(f"  All have exactly 2: {(variants_per_resume == 2).all()}")
+```
+
+## 6. Name Distribution
+
+```{python}
+# Count names by race
+name_counts = df.groupby(['race', 'assigned_name']).size().reset_index(name='count')
+
+print("Names per racial group:")
+print(f"  White names: {len(name_counts[name_counts['race']=='white'])}")
+print(f"  Black names: {len(name_counts[name_counts['race']=='black'])}")
+
+# Show sample names
+print("\nSample White names:")
+print(name_counts[name_counts['race']=='white']['assigned_name'].head(6).tolist())
+
+print("\nSample Black names:")
+print(name_counts[name_counts['race']=='black']['assigned_name'].head(6).tolist())
+```
+
+```{python}
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+for idx, race in enumerate(['white', 'black']):
+    race_names = name_counts[name_counts['race'] == race].sort_values('count', ascending=True)
+    axes[idx].barh(race_names['assigned_name'], race_names['count'],
+                   color='steelblue' if race == 'white' else 'coral', edgecolor='black')
+    axes[idx].set_title(f'{race.title()} Names Distribution')
+    axes[idx].set_xlabel('Count')
+
+plt.tight_layout()
+plt.savefig(FIGURES_DIR / 'name_distribution.png', dpi=150, bbox_inches='tight')
+plt.show()
+```
+
+## 7. Feature Correlations
+
+```{python}
+# Correlation matrix for numeric features
+numeric_features = ['skills_count', 'years_experience', 'education_level']
+if 'qualification_score' in df.columns:
+    numeric_features.append('qualification_score')
+
+corr_matrix = df[numeric_features].corr()
+
+fig, ax = plt.subplots(figsize=(8, 6))
+sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0, ax=ax,
+            square=True, fmt='.2f', linewidths=0.5)
+ax.set_title('Feature Correlations')
+plt.tight_layout()
+plt.savefig(FIGURES_DIR / 'feature_correlations.png', dpi=150, bbox_inches='tight')
+plt.show()
+```
+
+## 8. Statistical Verification
+
+Verify that qualification features are independent of race (as expected from matched-pair design).
+
+```{python}
+print("=== STATISTICAL VERIFICATION ===\n")
+
+# T-tests for each feature by race
+print("Two-sample t-tests (White vs Black):\n")
+for feature in ['skills_count', 'years_experience', 'education_level']:
+    white_vals = df[df['race'] == 'white'][feature]
+    black_vals = df[df['race'] == 'black'][feature]
+
+    t_stat, p_value = stats.ttest_ind(white_vals, black_vals)
+
+    print(f"{feature}:")
+    print(f"  White mean: {white_vals.mean():.2f}, Black mean: {black_vals.mean():.2f}")
+    print(f"  t-statistic: {t_stat:.4f}, p-value: {p_value:.4f}")
+    print(f"  Significant difference: {'Yes' if p_value < 0.05 else 'No'}")
+    print()
+
+print("(No significant differences expected due to matched-pair design)")
+```
+
+---
+
+## Summary
+
+```{python}
+print("=" * 60)
+print("EDA SUMMARY — RACE-ONLY DESIGN")
+print("=" * 60)
+
+print(f"\nDATASET")
+print(f"  Total records: {len(df)}")
+print(f"  Unique resumes: {df['ID'].nunique()}")
+print(f"  Matched versions per resume: 2 (White, Black)")
+
+print(f"\nFIELDS")
+for field in df['Field'].unique():
+    count = len(df[df['Field'] == field]) // 2  # Divide by 2 for unique resumes
+    print(f"  {field}: {count} resumes")
+
+print(f"\nFEATURES")
+print(f"  Skills count: {df['skills_count'].min()}-{df['skills_count'].max()} (mean: {df['skills_count'].mean():.1f})")
+print(f"  Years experience: {df['years_experience'].min()}-{df['years_experience'].max()} (mean: {df['years_experience'].mean():.1f})")
+print(f"  Education level: {df['education_level'].min()}-{df['education_level'].max()} (mean: {df['education_level'].mean():.1f})")
+
+print(f"\nRACIAL GROUPS")
+print(f"  Groups: 2 (White, Black)")
+print(f"  Records per group: {len(df)//2}")
+print(f"  Names per group: 24")
+
+print(f"\nMATCHED-PAIR VERIFICATION")
+print(f"  All pairs have identical qualifications: {'Yes' if issues == 0 else 'No'}")
+print(f"  All resumes have exactly 2 variants: {(variants_per_resume == 2).all()}")
+
+print(f"\nSCOPE DECISION")
+print(f"  Gender removed to match Quillian et al. (2017) scope")
+print(f"  Multiple names per race preserves proxy discrimination testing")
+
+print(f"\nFigures saved to results/figures/:")
+print(f"  - features_by_field.png")
+print(f"  - racial_distribution.png")
+print(f"  - qualification_scores.png")
+print(f"  - name_distribution.png")
+print(f"  - feature_correlations.png")
+```
+
+---
+
+## Next Steps
+
+In Phase 4, we will:
+1. Generate Quillian-calibrated callback labels (White:Black ratio = 1.36)
+2. Embed documented racial discrimination into training labels
+3. Prepare data for three experimental regimes

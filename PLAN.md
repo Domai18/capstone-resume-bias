@@ -127,3 +127,4 @@
 | Mar 2 | Removed gender, updated to race-only |
 | Mar 27 | Ran phases 4-6, got results, pushed to GitHub |
 | Mar 27 | Created PLAN.md for persistent memory |
+| Mar 30 | Fixed Phase 3 EDA to align with race-only methodology |
