@@ -128,3 +128,22 @@
 | Mar 27 | Ran phases 4-6, got results, pushed to GitHub |
 | Mar 27 | Created PLAN.md for persistent memory |
 | Mar 30 | Fixed Phase 3 EDA to align with race-only methodology |
+| Apr 8 | Validated Bernoulli sampling variation (see below) |
+
+---
+
+## J) Key Finding: Calibration Validation (For Final Draft)
+
+**Question from Dr. Pardue:** Is the achieved ratio of 1.53 (vs target 1.36) due to random variation or systematic overestimation?
+
+**Test:** Ran 15 Bernoulli sampling simulations with same calibrated parameters.
+
+**Results:**
+- Probability ratio BEFORE sampling: **1.360** (exact match to target)
+- After Bernoulli sampling: Range **1.06 – 1.94**
+- Mean across 15 runs: **1.38**
+- Our result (1.53): Within normal range
+
+**Conclusion:** The calibration is correct. The gap between 1.36 and 1.53 is **normal stochastic variation** from Bernoulli sampling with small callback counts (~10% rate × 1,102 records), NOT systematic overestimation.
+
+**Include in final report:** "The probability ratio before sampling matched the target exactly (1.36). Validation across 15 independent Bernoulli samples showed achieved ratios ranging from 1.06 to 1.94, confirming our result of 1.53 reflects expected sampling variation rather than methodological bias."

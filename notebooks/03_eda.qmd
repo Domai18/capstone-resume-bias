@@ -154,7 +154,7 @@ print(f"\nEach race should have {len(df)//2} records (equal due to matched pairs
 ## 4. Qualification Score Distribution
 
 ```{python}
-fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
 
 # Overall distribution
 if 'qualification_score' in df.columns:
@@ -168,19 +168,32 @@ else:
     )
     score_col = 'qualification_score'
 
-df[score_col].hist(bins=30, ax=axes[0], color='steelblue', edgecolor='black')
-axes[0].set_title('Qualification Score Distribution')
+# Left panel: Overall distribution
+df[score_col].hist(bins=30, ax=axes[0], color='steelblue', edgecolor='black', alpha=0.7)
+axes[0].set_title('Overall Qualification Score Distribution', fontsize=12, fontweight='bold')
 axes[0].set_xlabel('Qualification Score')
 axes[0].set_ylabel('Frequency')
-axes[0].axvline(x=df[score_col].median(), color='red', linestyle='--', label='Median')
+overall_median = df[score_col].median()
+axes[0].axvline(x=overall_median, color='red', linestyle='--', linewidth=2, label=f'Median: {overall_median:.1f}')
 axes[0].legend()
 
-# By race (should be identical for matched pairs)
-for race, color in [('white', 'steelblue'), ('black', 'coral')]:
-    subset = df[df['race'] == race]
-    axes[1].hist(subset[score_col], bins=20, alpha=0.6, label=race.title(), color=color, edgecolor='black')
+# Right panel: By race with overlapping histograms and median lines
+white_scores = df[df['race'] == 'white'][score_col]
+black_scores = df[df['race'] == 'black'][score_col]
 
-axes[1].set_title('Qualification Score by Race')
+# Use same bins for both to ensure proper overlap
+bins = np.linspace(df[score_col].min(), df[score_col].max(), 25)
+
+axes[1].hist(white_scores, bins=bins, alpha=0.5, label=f'White (median: {white_scores.median():.1f})',
+             color='steelblue', edgecolor='steelblue', linewidth=1.5)
+axes[1].hist(black_scores, bins=bins, alpha=0.5, label=f'Black (median: {black_scores.median():.1f})',
+             color='coral', edgecolor='coral', linewidth=1.5)
+
+# Add median lines for both races
+axes[1].axvline(x=white_scores.median(), color='steelblue', linestyle='--', linewidth=2)
+axes[1].axvline(x=black_scores.median(), color='coral', linestyle='--', linewidth=2)
+
+axes[1].set_title('Qualification Score by Race\n(Matched Pairs = Identical Distributions)', fontsize=12, fontweight='bold')
 axes[1].set_xlabel('Qualification Score')
 axes[1].set_ylabel('Frequency')
 axes[1].legend()
