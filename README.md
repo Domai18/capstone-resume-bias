@@ -58,8 +58,11 @@ All trained on identical biased labels—only feature availability differs:
 
 ## Results
 
-### Callback Rates by Race
-![Regime Comparison](results/figures/regime_comparison.png)
+### Callback Ratio & Disparate Impact
+![Callback Ratio and Disparate Impact](results/figures/callback_ratio_and_disparate_impact.png)
+
+### Callback Rates by Race (Logistic Regression)
+![Callback Rate LR](results/figures/callback_rate_by_race_lr.png)
 
 ### Statistical Significance
 
@@ -111,6 +114,8 @@ Names cluster by race in model coefficients:
 ## References
 
 - Bertrand, M., & Mullainathan, S. (2004). Are Emily and Greg more employable than Lakisha and Jamal? *American Economic Review*, 94(4), 991-1013.
+
+- Pager, D. (2003). The mark of a criminal record. *American Journal of Sociology*, 108(5), 937-975.
 
 - Quillian, L., Pager, D., Hexel, O., & Midtbøen, A. H. (2017). Meta-analysis of field experiments shows no change in racial discrimination in hiring over time. *PNAS*, 114(41), 10870-10875.
 

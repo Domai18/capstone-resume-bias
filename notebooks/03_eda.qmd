@@ -154,13 +154,12 @@ print(f"\nEach race should have {len(df)//2} records (equal due to matched pairs
 ## 4. Qualification Score Distribution
 
 ```{python}
-fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-# Overall distribution
+# Compute qualification score if not present
 if 'qualification_score' in df.columns:
     score_col = 'qualification_score'
 else:
-    # Compute if not present
     df['qualification_score'] = (
         0.35 * df['skills_count'] +
         0.40 * df['years_experience'] +
@@ -168,35 +167,48 @@ else:
     )
     score_col = 'qualification_score'
 
-# Left panel: Overall distribution
-df[score_col].hist(bins=30, ax=axes[0], color='steelblue', edgecolor='black', alpha=0.7)
-axes[0].set_title('Overall Qualification Score Distribution', fontsize=12, fontweight='bold')
-axes[0].set_xlabel('Qualification Score')
-axes[0].set_ylabel('Frequency')
-overall_median = df[score_col].median()
-axes[0].axvline(x=overall_median, color='red', linestyle='--', linewidth=2, label=f'Median: {overall_median:.1f}')
-axes[0].legend()
-
-# Right panel: By race with overlapping histograms and median lines
+# Separate scores by race
 white_scores = df[df['race'] == 'white'][score_col]
 black_scores = df[df['race'] == 'black'][score_col]
 
-# Use same bins for both to ensure proper overlap
-bins = np.linspace(df[score_col].min(), df[score_col].max(), 25)
+# LEFT PANEL: Overall distribution histogram
+axes[0].hist(df[score_col], bins=30, color='steelblue', edgecolor='white', alpha=0.8)
+overall_median = df[score_col].median()
+axes[0].axvline(x=overall_median, color='red', linestyle='--', linewidth=2.5,
+                label=f'Median: {overall_median:.1f}')
+axes[0].set_title('Overall Qualification Score Distribution', fontsize=13, fontweight='bold')
+axes[0].set_xlabel('Qualification Score', fontsize=11)
+axes[0].set_ylabel('Frequency', fontsize=11)
+axes[0].legend(fontsize=10)
+axes[0].grid(True, alpha=0.3, linestyle='--')
 
-axes[1].hist(white_scores, bins=bins, alpha=0.5, label=f'White (median: {white_scores.median():.1f})',
-             color='steelblue', edgecolor='steelblue', linewidth=1.5)
-axes[1].hist(black_scores, bins=bins, alpha=0.5, label=f'Black (median: {black_scores.median():.1f})',
-             color='coral', edgecolor='coral', linewidth=1.5)
+# RIGHT PANEL: Box plots by race (clean, non-misleading)
+box_data = [white_scores, black_scores]
+bp = axes[1].boxplot(box_data, tick_labels=['White\n(n=551)', 'Black\n(n=551)'],
+                      patch_artist=True, widths=0.5)
 
-# Add median lines for both races
-axes[1].axvline(x=white_scores.median(), color='steelblue', linestyle='--', linewidth=2)
-axes[1].axvline(x=black_scores.median(), color='coral', linestyle='--', linewidth=2)
+# Style the boxes
+colors = ['steelblue', 'coral']
+for patch, color in zip(bp['boxes'], colors):
+    patch.set_facecolor(color)
+    patch.set_alpha(0.7)
+for median in bp['medians']:
+    median.set_color('black')
+    median.set_linewidth(2)
 
-axes[1].set_title('Qualification Score by Race\n(Matched Pairs = Identical Distributions)', fontsize=12, fontweight='bold')
-axes[1].set_xlabel('Qualification Score')
-axes[1].set_ylabel('Frequency')
-axes[1].legend()
+# Add median value annotations
+axes[1].annotate(f'Median: {white_scores.median():.1f}',
+                 xy=(1, white_scores.median()),
+                 xytext=(0.55, white_scores.median() + 2),
+                 fontsize=10, fontweight='bold')
+axes[1].annotate(f'Median: {black_scores.median():.1f}',
+                 xy=(2, black_scores.median()),
+                 xytext=(2.1, black_scores.median() + 2),
+                 fontsize=10, fontweight='bold')
+
+axes[1].set_title('Qualification Score by Race\n(Identical by Matched-Pair Design)', fontsize=13, fontweight='bold')
+axes[1].set_ylabel('Qualification Score', fontsize=11)
+axes[1].grid(True, alpha=0.3, linestyle='--', axis='y')
 
 plt.tight_layout()
 plt.savefig(FIGURES_DIR / 'qualification_scores.png', dpi=150, bbox_inches='tight')
