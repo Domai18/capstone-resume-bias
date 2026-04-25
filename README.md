@@ -2,9 +2,22 @@
 
 **Can removing demographic features from ML models eliminate hiring discrimination?**
 
-This capstone project investigates whether excluding race from machine learning models mitigates bias when trained on historically discriminatory data—or whether proxy variables like names enable the reconstruction of discrimination.
-
 ![Bias Analysis Summary](results/figures/bias_analysis_summary.png)
+
+---
+
+## Why This Matters
+
+Organizations are racing to adopt AI for hiring, screening thousands of resumes at scale. But machine learning systems learn from historical data—and when that data reflects decades of discrimination, algorithms risk converting social prejudice into computational procedure.
+
+The evidence is stark:
+- **Quillian et al. (2017):** White applicants receive 36% more callbacks than equally qualified Black applicants, with no decline since 1989
+- **Bertrand & Mullainathan (2004):** Resumes with white-sounding names get 50% more callbacks than identical resumes with Black-sounding names
+- **Pager (2003):** White applicants with criminal records receive more callbacks than Black applicants with clean records
+
+When Amazon built an AI recruiting tool trained on 10 years of hiring data, it learned to penalize terms like "women's chess club" and was ultimately scrapped because engineers couldn't guarantee it wouldn't discriminate (Dastin, 2018).
+
+**This project asks:** If we train models on historically biased data, can we prevent discrimination by simply removing demographic features? Or do proxy variables—like names—allow bias to slip through?
 
 ---
 
@@ -101,6 +114,24 @@ Names cluster by race in model coefficients:
 
 ---
 
+## Implications
+
+**For organizations deploying AI hiring tools:**
+- Removing explicit race from model inputs is necessary but not sufficient
+- Name fields, zip codes, and other proxies must be audited
+- Matched-pair testing provides a rigorous framework for bias detection
+
+**For policymakers:**
+- "Race-blind" algorithms can still produce discriminatory outcomes
+- Disparate impact audits should be required for automated hiring systems
+- Training data provenance matters as much as model architecture
+
+**For job seekers:**
+- Algorithmic screening may perpetuate historical patterns of exclusion
+- The appearance of objectivity can mask systemic bias
+
+---
+
 ## Tech Stack
 
 - **Python 3** with Jupyter/Quarto
@@ -114,6 +145,8 @@ Names cluster by race in model coefficients:
 ## References
 
 - Bertrand, M., & Mullainathan, S. (2004). Are Emily and Greg more employable than Lakisha and Jamal? *American Economic Review*, 94(4), 991-1013.
+
+- Dastin, J. (2018). Amazon scraps secret AI recruiting tool that showed bias against women. *Reuters*.
 
 - Pager, D. (2003). The mark of a criminal record. *American Journal of Sociology*, 108(5), 937-975.
 
