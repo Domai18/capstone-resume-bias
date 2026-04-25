@@ -108,8 +108,8 @@ Names cluster by race in model coefficients:
 ├── results/
 │   ├── figures/             # Visualizations
 │   └── tables/              # Statistical outputs
-├── Methods_Essay.md         # Full methodology writeup
-└── CLAUDE.md               # Project context for AI assistance
+├── visualization_code.py    # All plotting functions documented
+└── Methods_Essay.md         # Full methodology writeup
 ```
 
 ---
