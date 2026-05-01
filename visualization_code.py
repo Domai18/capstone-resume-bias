@@ -17,8 +17,8 @@ from pathlib import Path
 # ============================================================================
 
 # Colorblind-friendly palette (Wong's palette)
-COLOR_WHITE = '#0072B2'      # Blue - for White applicants
-COLOR_BLACK = '#D55E00'      # Vermillion/Orange - for Black applicants
+COLOR_WHITE = '#D55E00'      # Coral/Vermillion - for White applicants
+COLOR_BLACK = '#0072B2'      # Steel Blue - for Black applicants
 COLOR_LR = '#56B4E9'         # Sky blue - for Logistic Regression
 COLOR_RF = '#E69F00'         # Orange/Amber - for Random Forest
 
@@ -143,8 +143,8 @@ def plot_qualification_scores(df):
     bp = axes[1].boxplot(box_data, tick_labels=['White\n(n=551)', 'Black\n(n=551)'],
                           patch_artist=True, widths=0.5)
 
-    # Style the boxes
-    colors = ['steelblue', 'coral']
+    # Style the boxes (coral=White, steelblue=Black for consistency)
+    colors = ['coral', 'steelblue']
     for patch, color in zip(bp['boxes'], colors):
         patch.set_facecolor(color)
         patch.set_alpha(0.7)
@@ -201,9 +201,9 @@ def plot_callback_rate_lr(df):
     width = 0.35
 
     bars1 = ax.bar(x - width/2, white_rates, width, label='White',
-                   color='steelblue', edgecolor='black', alpha=0.8)
-    bars2 = ax.bar(x + width/2, black_rates, width, label='Black',
                    color='coral', edgecolor='black', alpha=0.8)
+    bars2 = ax.bar(x + width/2, black_rates, width, label='Black',
+                   color='steelblue', edgecolor='black', alpha=0.8)
 
     # Add value labels on bars
     for bar, rate in zip(bars1, white_rates):
@@ -258,9 +258,9 @@ def plot_callback_rate_rf(df):
     width = 0.35
 
     bars1 = ax.bar(x - width/2, white_rates, width, label='White',
-                   color='steelblue', edgecolor='black', alpha=0.8)
-    bars2 = ax.bar(x + width/2, black_rates, width, label='Black',
                    color='coral', edgecolor='black', alpha=0.8)
+    bars2 = ax.bar(x + width/2, black_rates, width, label='Black',
+                   color='steelblue', edgecolor='black', alpha=0.8)
 
     # Add value labels on bars
     for bar, rate in zip(bars1, white_rates):

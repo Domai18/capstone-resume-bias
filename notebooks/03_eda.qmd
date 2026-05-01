@@ -187,8 +187,8 @@ box_data = [white_scores, black_scores]
 bp = axes[1].boxplot(box_data, tick_labels=['White\n(n=551)', 'Black\n(n=551)'],
                       patch_artist=True, widths=0.5)
 
-# Style the boxes
-colors = ['steelblue', 'coral']
+# Style the boxes (coral=White, steelblue=Black for consistency)
+colors = ['coral', 'steelblue']
 for patch, color in zip(bp['boxes'], colors):
     patch.set_facecolor(color)
     patch.set_alpha(0.7)
@@ -294,7 +294,7 @@ fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 for idx, race in enumerate(['white', 'black']):
     race_names = name_counts[name_counts['race'] == race].sort_values('count', ascending=True)
     axes[idx].barh(race_names['assigned_name'], race_names['count'],
-                   color='steelblue' if race == 'white' else 'coral', edgecolor='black')
+                   color='coral' if race == 'white' else 'steelblue', edgecolor='black')
     axes[idx].set_title(f'{race.title()} Names Distribution')
     axes[idx].set_xlabel('Count')
 
