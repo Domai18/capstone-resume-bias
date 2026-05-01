@@ -303,14 +303,14 @@ fig, axes = plt.subplots(1, 3, figsize=(14, 4))
 
 # 1. Callback probability by race
 ax1 = axes[0]
-sns.boxplot(data=df_labeled, x='race', y='callback_prob', ax=ax1, palette=['coral', 'steelblue'])
+sns.boxplot(data=df_labeled, x='race', y='callback_prob', ax=ax1, palette=['steelblue', 'coral'])
 ax1.set_title('Callback Probability by Race')
 ax1.set_ylabel('P(Callback)')
 
 # 2. Callback rate by race (bar chart)
 ax2 = axes[1]
 race_rates = df_labeled.groupby('race')['callback'].mean()
-colors = ['coral', 'steelblue']  # black, white (alphabetical)
+colors = ['steelblue', 'coral']  # black=steelblue, white=coral (alphabetical order)
 race_rates.plot(kind='bar', ax=ax2, color=colors)
 ax2.set_title('Callback Rate by Race')
 ax2.set_ylabel('Callback Rate')
@@ -320,7 +320,7 @@ ax2.legend()
 
 # 3. Callback probability vs qualification score
 ax3 = axes[2]
-for race, color in [('white', 'steelblue'), ('black', 'coral')]:
+for race, color in [('white', 'coral'), ('black', 'steelblue')]:
     subset = df_labeled[df_labeled['race'] == race]
     ax3.scatter(subset['qual_score'], subset['callback_prob'],
                 alpha=0.3, label=race.title(), color=color, s=10)
