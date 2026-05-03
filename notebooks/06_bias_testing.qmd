@@ -380,8 +380,8 @@ for regime in ['A_quals_only', 'B_quals_plus_names', 'C_quals_plus_race']:
 
 x = np.arange(len(regime_names_short))
 width = 0.35
-ax4.bar(x - width/2, white_rates, width, label='White', color='steelblue')
-ax4.bar(x + width/2, black_rates, width, label='Black', color='coral')
+ax4.bar(x - width/2, white_rates, width, label='White', color='coral')
+ax4.bar(x + width/2, black_rates, width, label='Black', color='steelblue')
 ax4.set_ylabel('Predicted Callback Rate')
 ax4.set_title('Callback Rate by Race (Logistic Regression)')
 ax4.set_xticks(x)
